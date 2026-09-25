@@ -1,4 +1,4 @@
-from agent.agent import RoleProfile
+from backend.agent.agent import RoleProfile
 
 # One profile per role; fields are consumed by VillagerAgent.build_prompt().
 # Note: permitted_action must match exactly.

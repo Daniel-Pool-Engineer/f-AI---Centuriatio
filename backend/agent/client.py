@@ -2,7 +2,7 @@ from typing import Dict, List
 
 from agno.agent import Agent
 
-from agent.llm import make_llm
+from backend.agent.llm import make_llm
 
 
 class LLMClient:

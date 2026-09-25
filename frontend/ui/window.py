@@ -1,9 +1,9 @@
 import pygame
 
-from centuriatio.ui.menu_bars import BottomMenuBar, RightMenuBar
+from frontend.ui.menu_bars import BottomMenuBar, RightMenuBar
 
-from centuriatio.village.map import create_test_map
-from centuriatio.village.renderer import VillageMapRenderer
+from frontend.village.map import create_test_map
+from frontend.village.renderer import VillageMapRenderer
 
 pygame.init()
 

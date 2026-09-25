@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Set
 import json
 import logging
 
-from map.graph import VillageMap
+from backend.map.graph import VillageMap
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
-from agent.client import LLMClient
-from agent.profile import CITIZEN
-from agent.agent import VillagerAgent, VillagerContext
+from backend.agent.client import LLMClient
+from backend.agent.profile import CITIZEN
+from backend.agent.agent import VillagerAgent, VillagerContext
 
 
 def main() -> None:
