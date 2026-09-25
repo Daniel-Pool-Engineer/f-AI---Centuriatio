@@ -11,7 +11,7 @@ Color = tuple[int, int, int]
 
 
 class VillageMapRenderer:
-    """draw a :class:`VillageMap` using a camera position and zoom level"""
+    """draw a :class:`VillageMap` using camera position and zoom level"""
 
     background_color: Color = (228, 231, 220)
     grid_color: Color = (211, 215, 204)
@@ -45,7 +45,7 @@ class VillageMapRenderer:
         self.camera_y = y
 
     def set_zoom(self, zoom: float) -> None:
-        """set the render scale, where 1.0 means one world unit per pixel"""
+        """set the render scale, 1.0 means one world unit per pixel"""
         if zoom <= 0:
             raise ValueError("zoom must be positive")
         self.zoom = zoom
