@@ -4,6 +4,7 @@ from frontend.ui.menu_bars import BottomMenuBar, RightMenuBar
 
 from frontend.village.map import create_test_map
 from frontend.village.renderer import VillageMapRenderer
+from frontend.village.villagers import SHELTER_ID, VillagerManager
 
 pygame.init()
 
@@ -14,13 +15,50 @@ screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
 pygame.display.set_caption("Centuriatio")
 
 clock = pygame.time.Clock()
-bottom_menu = BottomMenuBar()
-right_menu = RightMenuBar()
 is_panning = False
 last_mouse_position: tuple[int, int] | None = None
 MIN_ZOOM = 0.4
 MAX_ZOOM = 1.0
 ZOOM_STEP = 1.1
+
+# the disruption currently injected into the village (None = normal day)
+active_disruption: str | None = None
+
+right_menu = RightMenuBar()
+villagers = VillagerManager(village_map)
+
+
+def format_elapsed(milliseconds: int) -> str:
+    # mm:ss timestamp for the journal
+    total_seconds = milliseconds // 1000
+    minutes, seconds = divmod(total_seconds, 60)
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def log(text: str) -> None:
+    # add a timestamped line to the villager journal
+    right_menu.add_entry(f"[{format_elapsed(pygame.time.get_ticks())}] {text}")
+
+
+def handle_disruption(name: str, is_active: bool) -> None:
+    # called by the X-Factor menu when a disruption starts or ends
+    global active_disruption
+    if is_active:
+        active_disruption = name
+        log(f"X-Factor injected: {name}")
+    else:
+        active_disruption = None
+        log(f"{name} has ended")
+
+    if name == "Power Outage":
+        villagers.set_power_outage(is_active)
+        if is_active:
+            log(f"Villagers are heading to the {SHELTER_ID}")
+        else:
+            log("Power restored, villagers go back to their day")
+
+
+bottom_menu = BottomMenuBar(on_disruption=handle_disruption)
 
 
 def resize_menus() -> None:
@@ -74,10 +112,21 @@ def zoom_at(position: tuple[int, int], direction: int) -> None:
     clamp_camera()
 
 
+def draw_outage_overlay() -> None:
+    # darken the map while the power is out
+    overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+    overlay.fill((10, 15, 40, 140))
+    screen.blit(overlay, (0, 0))
+
+
 resize_menus()
 center_camera()
+log("Simulation started")
 
 while True:
+    # seconds since the last frame (also caps the game at 60 FPS)
+    dt = clock.tick(60) / 1000
+
     # Process player inputs.
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -115,15 +164,13 @@ while True:
             if not over_menu:
                 zoom_at(mouse_position, event.y)
 
-
         bottom_menu.handle_event(event)
         right_menu.handle_event(event)
 
     # Do logical updates here.
-    # ...
-
-    #screen.fill("white")  # Fill the display with a solid color
-
+    # move villagers and log their arrivals
+    for message in villagers.update(dt):
+        log(message)
 
     # Render the graphics here.
     renderer.draw(
@@ -132,8 +179,10 @@ while True:
         show_grid=True,
         show_labels=True,
     )
+    if active_disruption == "Power Outage":
+        draw_outage_overlay()
+    villagers.draw(screen, renderer)
     right_menu.draw(screen)
     bottom_menu.draw(screen)
 
     pygame.display.flip()  # Refresh on-screen display
-    clock.tick(60)         # wait until next frame (at 60 FPS)
