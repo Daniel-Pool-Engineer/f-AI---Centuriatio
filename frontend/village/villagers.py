@@ -205,14 +205,73 @@ class VillagerManager:
         return messages
 
     def draw(self, surface: pygame.Surface, renderer: VillageMapRenderer) -> None:
-        # draw each villager as a dot with their name above it
-        radius = max(4, round(10 * renderer.zoom))
         for villager in self.villagers:
             x, y = villager.position
             offset_x, offset_y = villager.offset
-            screen_pos = renderer.world_to_screen((x + offset_x, y + offset_y))
-            pygame.draw.circle(surface, villager.color, screen_pos, radius)
-            pygame.draw.circle(surface, (255, 255, 255), screen_pos, radius, width=2)
 
-            label = self.font.render(villager.name, True, (20, 20, 20))
-            surface.blit(label, label.get_rect(midbottom=(screen_pos[0], screen_pos[1] - radius - 2)))
+            screen_pos = renderer.world_to_screen(
+                (x + offset_x, y + offset_y)
+            )
+
+            radius = max(5, round(9 * renderer.zoom))
+
+            # body
+            body_rect = pygame.Rect(
+                screen_pos[0] - radius,
+                screen_pos[1] - radius,
+                radius * 2,
+                radius * 2,
+            )
+
+            pygame.draw.circle(
+                surface,
+                villager.color,
+                screen_pos,
+                radius,
+            )
+
+            pygame.draw.circle(
+                surface,
+                (255, 255, 255),
+                screen_pos,
+                radius,
+                width=2,
+            )
+
+            # small head
+            head_pos = (
+                screen_pos[0],
+                screen_pos[1] - radius,
+            )
+
+            pygame.draw.circle(
+                surface,
+                (240, 200, 170),
+                head_pos,
+                max(3, radius // 2),
+            )
+
+            label = self.font.render(
+                villager.name,
+                True,
+                (20, 20, 20),
+            )
+
+            label_rect = label.get_rect(
+                midbottom=(
+                    screen_pos[0],
+                    screen_pos[1] - radius - 5,
+                )
+            )
+
+            # little white background behind the name
+            label_background = label_rect.inflate(6, 3)
+
+            pygame.draw.rect(
+                surface,
+                (245, 245, 240),
+                label_background,
+                border_radius=3,
+            )
+
+            surface.blit(label, label_rect)

@@ -23,7 +23,7 @@ class FloatingMenuBar:
         *,
         background: Color = (31, 35, 48),
         border: Color = (92, 101, 125),
-        text_color: Color = (0, 0, 0),
+        text_color: Color = (240, 242, 245),
     ) -> None:
         self.background = background
         self.border = border
@@ -66,8 +66,8 @@ class BottomMenuBar(FloatingMenuBar):
         disruptions: tuple[str, ...] = DEFAULT_DISRUPTIONS,
     ) -> None:
         super().__init__(
-            background=(114, 183, 249),
-            border=(127, 83, 246),
+            background=(55, 64, 82),
+            border=(125, 140, 170),
         )
         # called as on_disruption(name, is_active) when a disruption starts or ends
         self.on_disruption = on_disruption
@@ -156,8 +156,8 @@ class RightMenuBar(FloatingMenuBar):
 
     def __init__(self, max_entries: int = 100) -> None:
         super().__init__(
-            background=(105, 161, 65),
-            border=(127, 83, 246),
+            background=(55, 64, 82),
+            border=(125, 140, 170),
         )
         self.entry_font = pygame.font.Font(None, 20)
         self.max_entries = max_entries
