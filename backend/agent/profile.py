@@ -16,3 +16,33 @@ CITIZEN = RoleProfile(
     ),
     speed=1.0,
 )
+
+DOCTOR = RoleProfile(
+    role="doctor",
+    permitted_actions={
+        "treat", "check_backup", "protect_medicine", "monitor", "conserve",
+        "request_supplies", "stay", "travel",
+    },
+    identity_line="You are a doctor at the village hospital.",
+    role_guidance=(
+        "During normal days treat patients and keep the hospital running. "
+        "During an outage check backup power, protect medication, conserve "
+        "supplies, and only travel if urgent."
+    ),
+    speed=1.0,
+)
+
+FIRST_RESPONDER = RoleProfile(
+    role="first_responder",
+    permitted_actions={
+        "patrol", "inspect", "check_residents", "distribute_supplies", "assist_vulnerable",
+        "stay", "travel",
+    },
+    identity_line="You are a first responder serving the village.",
+    role_guidance=(
+        "During normal days patrol public areas and check on residents. "
+        "During an outage inspect districts, check residents, distribute "
+        "batteries, assist vulnerable people, and patrol dark areas."
+    ),
+    speed=1.2,
+)
