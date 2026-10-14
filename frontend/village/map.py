@@ -9,8 +9,8 @@ from typing import Literal
 CELL_SIZE = 16
 """world units per map cell"""
 
-DEFAULT_MAP_CELLS = (256, 192)
-"""width and height of the starter map in cells"""
+DEFAULT_MAP_CELLS = (200, 150)
+# width and height of the starter map in cells
 
 Point = tuple[int, int]
 Rect = tuple[int, int, int, int]
@@ -18,27 +18,8 @@ RoadType = Literal["main", "local"]
 BuildingType = Literal["house", "apartment", "shop", "office", "public"]
 
 
-TEST_MAP_FEATURE_OFFSET = (512, 512)
-
-
-def _offset_point(point: Point) -> Point:
-    offset_x, offset_y = TEST_MAP_FEATURE_OFFSET
-    x, y = point
-    return x + offset_x, y + offset_y
-
-
-def _offset_rect(rect: Rect) -> Rect:
-    offset_x, offset_y = TEST_MAP_FEATURE_OFFSET
-    x, y, width, height = rect
-    return x + offset_x, y + offset_y, width, height
-
-
 @dataclass
 class Grid:
-    """cell grid used for layout and view calculations;
-
-    designed for NPCs using world-unit positions instead of being restricted to cells
-    """
 
     width: int
     height: int
@@ -78,7 +59,6 @@ class Grid:
 @dataclass(frozen=True)
 class Road:
     """a static road segment represented by a world-space rectangle"""
-
     id: str
     bounds: Rect
     road_type: RoadType
@@ -87,7 +67,6 @@ class Road:
 @dataclass(frozen=True)
 class Sidewalk:
     """a walkable sidewalk segment and its neighboring segments"""
-
     id: str
     bounds: Rect
     connections: tuple[str, ...] = ()
@@ -96,7 +75,6 @@ class Sidewalk:
 @dataclass(frozen=True)
 class Building:
     """a building footprint connected to the pedestrian network by an entrance"""
-
     id: str
     building_type: BuildingType
     bounds: Rect
@@ -104,16 +82,19 @@ class Building:
     sidewalk_id: str
     capacity: int = 1
 
+    @property
+    def display_name(self) -> str:
+        return self.id.replace("_", " ").title()
+
 
 @dataclass
 class VillageMap:
     """the static world consumed by rendering and simulation systems"""
-
     grid: Grid
     roads: list[Road] = field(default_factory=list)
     sidewalks: list[Sidewalk] = field(default_factory=list)
     buildings: list[Building] = field(default_factory=list)
-    villager_spawn: Point = (512, 512)
+    villager_spawn: Point = (0, 0)
 
     @property
     def world_size(self) -> tuple[int, int]:
@@ -126,12 +107,20 @@ class VillageMap:
                 return sidewalk
         raise KeyError(f"Unknown sidewalk: {sidewalk_id}")
 
+    def building(self, building_id: str) -> Building:
+        # return a building by ID or raise a useful error
+        for building in self.buildings:
+            if building.id == building_id:
+                return building
+        raise KeyError(f"Unknown building: {building_id}")
+
     def validate(self) -> None:
-        """check references and basic bounds for a hand-authored map"""
         sidewalk_ids = {sidewalk.id for sidewalk in self.sidewalks}
         building_ids = {building.id for building in self.buildings}
         if len(building_ids) != len(self.buildings):
             raise ValueError("Building IDs must be unique")
+        if len(sidewalk_ids) != len(self.sidewalks):
+            raise ValueError("Sidewalk IDs must be unique")
 
         map_width, map_height = self.world_size
 
@@ -156,6 +145,11 @@ class VillageMap:
                 raise ValueError(
                     f"Sidewalk {sidewalk.id} references unknown segments: {unknown}"
                 )
+            for conn in sidewalk.connections:
+                if sidewalk.id not in self.sidewalk(conn).connections:
+                    raise ValueError(
+                        f"Sidewalk {sidewalk.id} connects to {conn} but not vice versa"
+                    )
 
         for building in self.buildings:
             if not is_inside(building.bounds):
@@ -170,34 +164,40 @@ class VillageMap:
 
 
 def create_test_map() -> VillageMap:
-    """small hand-authored test-map"""
     village_map = VillageMap(
         grid=Grid(*DEFAULT_MAP_CELLS),
         roads=[
-            Road("main-east-west", _offset_rect((0, 480, 3072, 96)), "main"),
-            Road("main-north-south", _offset_rect((960, 0, 96, 2048)), "main"),
-            Road("local-north", _offset_rect((320, 192, 640, 64)), "local"),
-            Road("local-south", _offset_rect((1056, 896, 672, 64)), "local"),
+            Road("main-east-west", (0, 1104, 3200, 128), "main"),
+            Road("main-north-south", (1488, 0, 128, 2400), "main"),
         ],
         sidewalks=[
-            Sidewalk("northwest-main", _offset_rect((0, 448, 960, 32)), ("north-west", "south-west")),
-            Sidewalk("northeast-main", _offset_rect((1056, 448, 992, 32)), ("north-east", "south-east")),
-            Sidewalk("north-west", _offset_rect((928, 0, 32, 480)), ("northwest-main",)),
-            Sidewalk("north-east", _offset_rect((1056, 0, 32, 480)), ("northeast-main",)),
-            Sidewalk("south-west", _offset_rect((928, 576, 32, 832)), ("northwest-main","southwest-main")),
-            Sidewalk("south-east", _offset_rect((1056, 576, 32, 832)), ("northeast-main","southeast-main")),
-            Sidewalk("southwest-main", _offset_rect((0, 576, 960, 32)), ("north-west", "south-west")),
-            Sidewalk("southeast-main", _offset_rect((1056, 576, 992, 32)), ("north-east", "south-east")),
+            Sidewalk("northwest-main", (0, 1048, 1488, 48), ("north-west", "crosswalk-north")),
+            Sidewalk("northeast-main", (1616, 1048, 1584, 48), ("north-east", "crosswalk-north")),
+            Sidewalk("southwest-main", (0, 1240, 1488, 48), ("south-west", "crosswalk-south")),
+            Sidewalk("southeast-main", (1616, 1240, 1584, 48), ("south-east", "crosswalk-south")),
+            Sidewalk("north-west", (1432, 0, 48, 1096), ("northwest-main", "crosswalk-west")),
+            Sidewalk("north-east", (1624, 0, 48, 1096), ("northeast-main", "crosswalk-east")),
+            Sidewalk("south-west", (1432, 1240, 48, 1160), ("southwest-main", "crosswalk-west")),
+            Sidewalk("south-east", (1624, 1240, 48, 1160), ("southeast-main", "crosswalk-east")),
+            Sidewalk("crosswalk-north", (1488, 1048, 128, 48), ("northwest-main", "northeast-main")),
+            Sidewalk("crosswalk-south", (1488, 1240, 128, 48), ("southwest-main", "southeast-main")),
+            Sidewalk("crosswalk-west", (1432, 1096, 48, 144), ("north-west", "south-west")),
+            Sidewalk("crosswalk-east", (1624, 1096, 48, 144), ("north-east", "south-east")),
         ],
         buildings=[
-            Building("house-west", "house", _offset_rect((160, 280, 160, 112)), _offset_point((240, 392)), "northwest-main"),
-            Building("apartment-west", "apartment", _offset_rect((480, 240, 240, 160)), _offset_point((600, 400)), "northwest-main", 12),
-            Building("shop-west", "shop", _offset_rect((720, 640, 144, 112)), _offset_point((792, 640)), "south-west", 4),
-            Building("office-east", "office", _offset_rect((1248, 240, 256, 160)), _offset_point((1376, 400)), "northeast-main", 20),
-            Building("shop-east", "shop", _offset_rect((1568, 640, 144, 112)), _offset_point((1640, 640)), "south-east", 4),
-            Building("public-hall", "public", _offset_rect((1120, 1040, 240, 176)), _offset_point((1240, 1040)), "south-east", 30),
+            Building("home_a", "house", (400, 700, 200, 348), (500, 1048), "northwest-main", 4),
+            Building("home_b", "apartment", (700, 700, 300, 348), (850, 1048), "northwest-main", 12),
+            Building("hospital", "public", (1100, 600, 300, 448), (1250, 1048), "northwest-main", 20),
+            Building("police", "public", (1700, 700, 300, 348), (1850, 1048), "northeast-main", 10),
+            Building("school", "public", (2100, 500, 400, 548), (2300, 1048), "northeast-main", 30),
+            Building("work", "office", (2700, 700, 400, 348), (2900, 1048), "northeast-main", 20),
+            Building("fire", "public", (100, 1288, 400, 348), (300, 1288), "southwest-main", 10),
+            Building("grocery", "shop", (600, 1288, 400, 400), (800, 1288), "southwest-main", 6),
+            Building("electrical", "public", (1700, 1288, 400, 348), (1900, 1288), "southeast-main", 8),
+            Building("home_c", "house", (2200, 1288, 300, 400), (2350, 1288), "southeast-main", 4),
+            Building("home_d", "house", (2700, 1288, 300, 400), (2850, 1288), "southeast-main", 4),
         ],
-        villager_spawn=_offset_point((100, 100)),
+        villager_spawn=(500, 1072),
     )
     village_map.validate()
     return village_map
