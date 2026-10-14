@@ -1,14 +1,26 @@
 import pygame
 
+#frontend imports
 from frontend.ui.menu_bars import BottomMenuBar, RightMenuBar
-
 from frontend.village.map import create_test_map
 from frontend.village.renderer import VillageMapRenderer
+from frontend.village.navigation import route
+from frontend.village.sprite import VillagerSprite
+
+#Backend imports
+from backend.agent.agent import VillagerAgent, VillagerContext
+from backend.agent.client import LLMClient
+from backend.agent.profile import CITIZEN
 
 pygame.init()
 
 village_map = create_test_map()
 renderer = VillageMapRenderer()
+maria = VillagerSprite(village_map.villager_spawn)
+maria_agent = VillagerAgent("m1", "Maria", CITIZEN, llm_client=LLMClient())
+maria_location = "home_a"
+maria_previous_action: str | None = None
+maria_cooldown = 0.0
 
 screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
 pygame.display.set_caption("Centuriatio")
@@ -18,7 +30,7 @@ bottom_menu = BottomMenuBar()
 right_menu = RightMenuBar()
 is_panning = False
 last_mouse_position: tuple[int, int] | None = None
-MIN_ZOOM = 0.4
+MIN_ZOOM = 0.15
 MAX_ZOOM = 1.0
 ZOOM_STEP = 1.1
 
@@ -76,6 +88,7 @@ def zoom_at(position: tuple[int, int], direction: int) -> None:
 
 resize_menus()
 center_camera()
+dt_seconds = 0.0
 
 while True:
     # Process player inputs.
@@ -123,7 +136,32 @@ while True:
     # ...
 
     #screen.fill("white")  # Fill the display with a solid color
-
+    maria.update(dt_seconds)
+    maria_cooldown -= dt_seconds
+    if not maria.path and maria_cooldown <= 0:
+        maria_cooldown = 2.0
+        ctx = VillagerContext(
+            villager_id="m1",
+            name="Maria",
+            location_id=maria_location,
+            day=1,
+            phase="day",
+            crisis_active=False,
+            crisis_day=0,
+            crisis_duration=0,
+            crisis_area=None,
+            power_on=True,
+            previous_action=maria_previous_action,
+        )
+        action = maria_agent.decide(ctx)
+        print(f"Maria: {action.action} -> {action.target_location} | {action.journal}")
+        maria_previous_action = action.action
+        if action.target_location and action.target_location != maria_location:
+            try:
+                maria.set_path(route(village_map, maria_location, action.target_location))
+                maria_location = action.target_location
+            except ValueError as exc:
+                print(f"  route failed: {exc}")
 
     # Render the graphics here.
     renderer.draw(
@@ -132,8 +170,9 @@ while True:
         show_grid=True,
         show_labels=True,
     )
+    renderer.draw_sprite(screen, maria)
     right_menu.draw(screen)
     bottom_menu.draw(screen)
 
     pygame.display.flip()  # Refresh on-screen display
-    clock.tick(60)         # wait until next frame (at 60 FPS)
+    dt_seconds = clock.tick(60) / 1000.0
