@@ -1,5 +1,3 @@
-"""pygame renderer for the static village map"""
-
 from __future__ import annotations
 
 import pygame
@@ -140,3 +138,7 @@ class VillageMapRenderer:
         for y in range(0, height + cell_size, cell_size):
             _, screen_y = self.world_to_screen((0, y))
             pygame.draw.line(surface, self.grid_color, (left, screen_y), (right, screen_y))
+
+    def draw_sprite(self, surface: pygame.Surface, sprite) -> None:
+        x,y = self.world_to_screen((int(sprite.x), int(sprite.y)))
+        pygame.draw.circle(surface, sprite.color, (x,y), sprite.radius)
