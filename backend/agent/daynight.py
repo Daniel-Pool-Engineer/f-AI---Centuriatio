@@ -23,7 +23,7 @@ class Clock:
             return self.night_length
 
     def speedup(self, speed: int) -> None:
-        # for 1 for 1x and 2 for 2x speedup
+        # for 1x and 2x
         if speed in (1, 2):
             self.speed = speed
 
@@ -31,8 +31,37 @@ class Clock:
         self.paused = not self.paused
 
     def update(self, real_sec: float) -> List[Tuple[str, int]]:
-      days_passed = []
-      return days_passed
+        if self.paused:
+            return []
+
+        self.time_passed += real_sec*self.speed
+        days_passed = []
+
+        while self.time_passed >= self.day_night_len:
+            self.time_passed -= self.day_night_len
+
+            if self.day_night == "Day":
+                self.day_night = "Night"
+            else:
+                self.day_night = "Day"
+                self.day_number += 1
+            days_passed.append((self.day_night, self.day_number))
+
+        return days_passed
 
     def get_time(self) -> str:
-      return ""
+        if self.day_night == "Day":
+            start = 6 * 60
+        else:
+            start = 18 * 60
+
+        progress = self.time_passed / self.day_night_len
+        passed = int(progress * 12 * 60)
+        minutes = start + passed
+        if minutes >= 24*60:
+            minutes -= 24*60
+        
+        hours = minutes // 60
+        left_over_min = minutes % 60
+        
+        return f"{hours}:{left_over_min:02d}"
