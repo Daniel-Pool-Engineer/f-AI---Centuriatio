@@ -1,5 +1,7 @@
 import pygame
 
+from backend.agent.daynight import Clock
+
 from frontend.ui.menu_bars import BottomMenuBar, RightMenuBar
 
 from frontend.village.map import create_test_map
@@ -14,7 +16,8 @@ renderer = VillageMapRenderer()
 screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
 pygame.display.set_caption("Centuriatio")
 
-clock = pygame.time.Clock()
+clock = pygame.time.Clock()   # frame timer (60 FPS)
+sim_clock = Clock()           # in-game day/night clock from the backend
 is_panning = False
 last_mouse_position: tuple[int, int] | None = None
 MIN_ZOOM = 0.4
@@ -23,42 +26,76 @@ ZOOM_STEP = 1.1
 
 # the disruption currently injected into the village (None = normal day)
 active_disruption: str | None = None
+outage_start_day = 1  # in-game day the outage started on
 
 right_menu = RightMenuBar()
 villagers = VillagerManager(village_map)
 
 
-def format_elapsed(milliseconds: int) -> str:
-    # mm:ss timestamp for the journal
-    total_seconds = milliseconds // 1000
-    minutes, seconds = divmod(total_seconds, 60)
-    return f"{minutes:02d}:{seconds:02d}"
+def period_label() -> str:
+    # e.g. "Normal Day 1" or "Outage Night 2"
+    if active_disruption == "Power Outage":
+        number = sim_clock.day_number - outage_start_day + 1
+        return f"Outage {sim_clock.day_night} {number}"
+    return f"Normal {sim_clock.day_night} {sim_clock.day_number}"
 
 
 def log(text: str) -> None:
-    # add a timestamped line to the villager journal
-    right_menu.add_entry(f"[{format_elapsed(pygame.time.get_ticks())}] {text}")
+    # add a line to the journal with the in-game time
+    right_menu.add_entry(f"[{sim_clock.get_time()}] {text}")
+
+
+def log_period() -> None:
+    # add a header when a new period starts
+    right_menu.add_entry(f"--- {period_label()} ---")
 
 
 def handle_disruption(name: str, is_active: bool) -> None:
     # called by the X-Factor menu when a disruption starts or ends
-    global active_disruption
+    global active_disruption, outage_start_day
     if is_active:
         active_disruption = name
+        outage_start_day = sim_clock.day_number
+        log_period()
         log(f"X-Factor injected: {name}")
     else:
-        active_disruption = None
         log(f"{name} has ended")
+        active_disruption = None
+        log_period()
 
     if name == "Power Outage":
         villagers.set_power_outage(is_active)
         if is_active:
             log(f"Villagers are heading to the {SHELTER_ID}")
         else:
-            log("Power restored, villagers go back to their day")
+            log("Power restored, villagers go back to their routine")
 
 
-bottom_menu = BottomMenuBar(on_disruption=handle_disruption)
+def reset_simulation() -> None:
+    # start everything over from Normal Day 1
+    global villagers, active_disruption
+    sim_clock.reset()
+    villagers = VillagerManager(village_map)
+    active_disruption = None
+    bottom_menu.clear_disruption()
+    right_menu.clear()
+    log_period()
+    log("Simulation started")
+
+
+def handle_control(name: str) -> None:
+    # called by the Pause / Speed / Reset buttons
+    if name == "pause":
+        sim_clock.control_pause()
+        log("Simulation paused" if sim_clock.paused else "Simulation resumed")
+    elif name == "speed":
+        sim_clock.speedup(2 if sim_clock.speed == 1 else 1)
+    elif name == "reset":
+        reset_simulation()
+    bottom_menu.set_control_state(sim_clock.paused, sim_clock.speed)
+
+
+bottom_menu = BottomMenuBar(on_disruption=handle_disruption, on_control=handle_control)
 
 
 def resize_menus() -> None:
@@ -112,19 +149,20 @@ def zoom_at(position: tuple[int, int], direction: int) -> None:
     clamp_camera()
 
 
-def draw_outage_overlay() -> None:
-    # darken the map while the power is out
+def draw_overlay(alpha: int) -> None:
+    # darken the map (used for night and power outages)
     overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-    overlay.fill((10, 15, 40, 140))
+    overlay.fill((10, 15, 40, alpha))
     screen.blit(overlay, (0, 0))
 
 
 resize_menus()
 center_camera()
+log_period()
 log("Simulation started")
 
 while True:
-    # seconds since the last frame (also caps the game at 60 FPS)
+    # real seconds since the last frame (also caps the game at 60 FPS)
     dt = clock.tick(60) / 1000
 
     # Process player inputs.
@@ -168,9 +206,21 @@ while True:
         right_menu.handle_event(event)
 
     # Do logical updates here.
-    # move villagers and log their arrivals
-    for message in villagers.update(dt):
+    # advance the day/night clock (it handles pause and speed itself)
+    for phase, _day in sim_clock.update(dt):
+        villagers.set_night(phase == "Night")
+        log_period()
+        log("Night falls, villagers head home" if phase == "Night" else "Morning, villagers start their day")
+
+    # villagers move faster at 2x and stop when paused
+    sim_dt = 0 if sim_clock.paused else dt * sim_clock.speed
+    for message in villagers.update(sim_dt):
         log(message)
+
+    status = f"{period_label()}  ·  {sim_clock.get_time()}"
+    if sim_clock.paused:
+        status += "  ·  Paused"
+    bottom_menu.set_status(status)
 
     # Render the graphics here.
     renderer.draw(
@@ -179,8 +229,10 @@ while True:
         show_grid=True,
         show_labels=True,
     )
+    if sim_clock.day_night == "Night":
+        draw_overlay(90)
     if active_disruption == "Power Outage":
-        draw_outage_overlay()
+        draw_overlay(140)
     villagers.draw(screen, renderer)
     right_menu.draw(screen)
     bottom_menu.draw(screen)

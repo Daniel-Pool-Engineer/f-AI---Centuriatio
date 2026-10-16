@@ -63,6 +63,7 @@ class BottomMenuBar(FloatingMenuBar):
     def __init__(
         self,
         on_disruption: Callable[[str, bool], None] | None = None,
+        on_control: Callable[[str], None] | None = None,
         disruptions: tuple[str, ...] = DEFAULT_DISRUPTIONS,
     ) -> None:
         super().__init__(
@@ -71,10 +72,26 @@ class BottomMenuBar(FloatingMenuBar):
         )
         # called as on_disruption(name, is_active) when a disruption starts or ends
         self.on_disruption = on_disruption
+        # called as on_control("pause" | "speed" | "reset")
+        self.on_control = on_control
         self.active_disruption: str | None = None
-        self.buttons = [
+        self.status_text = ""
+
+        self.disruption_buttons = [
             Button(name, on_click=lambda name=name: self.toggle_disruption(name))
             for name in disruptions
+        ]
+
+        # simulation controls
+        self.pause_button = Button("Pause", on_click=lambda: self._control("pause"))
+        self.speed_button = Button("Speed 1x", on_click=lambda: self._control("speed"))
+        self.reset_button = Button("Reset", on_click=lambda: self._control("reset"))
+
+        self.buttons = [
+            *self.disruption_buttons,
+            self.pause_button,
+            self.speed_button,
+            self.reset_button,
         ]
 
     def toggle_disruption(self, name: str) -> None:
@@ -89,8 +106,27 @@ class BottomMenuBar(FloatingMenuBar):
             self.active_disruption = name
             self._notify(name, True)
 
-        for button in self.buttons:
+        for button in self.disruption_buttons:
             button.is_active = button.label == self.active_disruption
+
+    def clear_disruption(self) -> None:
+        # turn off the active disruption without sending a notification (used by reset)
+        self.active_disruption = None
+        for button in self.disruption_buttons:
+            button.is_active = False
+
+    def set_control_state(self, paused: bool, speed: int) -> None:
+        # update the control button labels to match the clock
+        self.pause_button.label = "Resume" if paused else "Pause"
+        self.speed_button.label = f"Speed {speed}x"
+
+    def set_status(self, text: str) -> None:
+        # text shown in the top-left corner, e.g. "Normal Day 1 · 10:30"
+        self.status_text = text
+
+    def _control(self, name: str) -> None:
+        if self.on_control is not None:
+            self.on_control(name)
 
     def _notify(self, name: str, is_active: bool) -> None:
         if self.on_disruption is not None:
@@ -143,6 +179,11 @@ class BottomMenuBar(FloatingMenuBar):
         )
         surface.blit(label, label_rect)
 
+        # day/time status on the left
+        if self.status_text:
+            status = self.font.render(self.status_text, True, self.text_color)
+            surface.blit(status, (self.rect.left + self.padding * 2, self.rect.top + self.padding // 2))
+
         for button in self.buttons:
             button.draw(surface)
 
@@ -167,6 +208,10 @@ class RightMenuBar(FloatingMenuBar):
         """add a line to the top of the villager journal"""
         self.entries.insert(0, text)
         del self.entries[self.max_entries:]
+
+    def clear(self) -> None:
+        # remove every journal entry (used by reset)
+        self.entries.clear()
 
     def resize(self, surface_size: tuple[int, int]) -> None:
         width, height = surface_size

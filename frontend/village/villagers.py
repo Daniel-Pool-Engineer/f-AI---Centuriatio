@@ -126,6 +126,7 @@ class VillagerManager:
         self.buildings = {b.id: b for b in village_map.buildings}
         self.rng = rng or random.Random()
         self.power_outage = False
+        self.is_night = False
         self.font = pygame.font.Font(None, 16)
         self.villagers = [
             self._spawn(name, home_id, color) for name, home_id, color in STARTING_VILLAGERS
@@ -146,15 +147,38 @@ class VillagerManager:
         )
 
     def set_power_outage(self, active: bool) -> None:
-        # outage: everyone heads to the shelter, restored: they wander again soon
+        # outage: everyone heads to the shelter, restored: back to normal routine
         self.power_outage = active
-        for villager in self.villagers:
-            if active:
+        if active:
+            for villager in self.villagers:
                 already_there = villager.location_id == SHELTER_ID and not villager.is_walking
                 if not already_there:
                     self.send_to(villager, SHELTER_ID)
-            else:
-                villager.wait_time = self.rng.uniform(1.0, 4.0)
+        elif self.is_night:
+            self._send_everyone_home()
+        else:
+            self._wake_up()
+
+    def set_night(self, is_night: bool) -> None:
+        # night: villagers go home, morning: they start wandering again
+        self.is_night = is_night
+        if self.power_outage:
+            return  # during an outage they stay at the shelter
+        if is_night:
+            self._send_everyone_home()
+        else:
+            self._wake_up()
+
+    def _send_everyone_home(self) -> None:
+        for villager in self.villagers:
+            at_home = villager.location_id == villager.home_id and not villager.is_walking
+            if not at_home:
+                self.send_to(villager, villager.home_id)
+
+    def _wake_up(self) -> None:
+        # leave in a few seconds so they don't all walk out at once
+        for villager in self.villagers:
+            villager.wait_time = self.rng.uniform(1.0, 4.0)
 
     def send_to(self, villager: Villager, building_id: str) -> None:
         building = self.buildings[building_id]
@@ -197,8 +221,8 @@ class VillagerManager:
                     villager.destination_id = None
                     villager.wait_time = self.rng.uniform(3.0, 8.0)
                     messages.append(f"{villager.name} arrived at {villager.location_id}")
-            elif not self.power_outage:
-                # during an outage villagers stay put at the shelter
+            elif not self.power_outage and not self.is_night:
+                # villagers only wander during a normal day
                 villager.wait_time -= dt
                 if villager.wait_time <= 0:
                     self.send_to(villager, self._pick_destination(villager))
