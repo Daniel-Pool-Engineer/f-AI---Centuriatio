@@ -12,6 +12,9 @@ from frontend.village.villager import Villager
 
 pygame.init()
 
+screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
+pygame.display.set_caption("Centuriatio")
+
 village_map = create_test_map()
 renderer = VillageMapRenderer()
 
@@ -21,9 +24,6 @@ villagers = [
     Villager("d1", "James", DOCTOR, "hospital", _llm, village_map),
     Villager("f1", "Daniel", FIRST_RESPONDER, "fire", _llm, village_map),
 ]
-
-screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
-pygame.display.set_caption("Centuriatio")
 
 clock = pygame.time.Clock()
 bottom_menu = BottomMenuBar()
