@@ -16,17 +16,17 @@ from .renderer import VillageMapRenderer
 Color = tuple[int, int, int]
 Vec = tuple[float, float]
 
-SHELTER_ID = "public-hall"  # where villagers go during a power outage
-CROSSWALK_GAP = 100         # sidewalks this close are connected by a road crossing
+SHELTER_ID = "school"  # where villagers go during a power outage
+CROSSWALK_GAP = 100    # sidewalks this close are connected by a road crossing
 
-# name, home building, color
+# name, home building, color (building ids match backend/map/graph.py)
 STARTING_VILLAGERS = [
-    ("Ana", "house-west", (220, 60, 60)),
-    ("Ben", "apartment-west", (40, 120, 220)),
-    ("Carla", "apartment-west", (240, 140, 20)),
-    ("Diego", "apartment-west", (30, 160, 90)),
-    ("Elena", "house-west", (170, 60, 190)),
-    ("Felix", "apartment-west", (20, 20, 20)),
+    ("Ana", "home_a", (220, 60, 60)),
+    ("Ben", "home_b", (40, 120, 220)),
+    ("Carla", "home_b", (240, 140, 20)),
+    ("Diego", "home_c", (30, 160, 90)),
+    ("Elena", "home_d", (170, 60, 190)),
+    ("Felix", "home_b", (20, 20, 20)),
 ]
 
 
@@ -220,7 +220,8 @@ class VillagerManager:
                     villager.location_id = villager.destination_id
                     villager.destination_id = None
                     villager.wait_time = self.rng.uniform(3.0, 8.0)
-                    messages.append(f"{villager.name} arrived at {villager.location_id}")
+                    place = self.buildings[villager.location_id].display_name
+                    messages.append(f"{villager.name} arrived at {place}")
             elif not self.power_outage and not self.is_night:
                 # villagers only wander during a normal day
                 villager.wait_time -= dt
