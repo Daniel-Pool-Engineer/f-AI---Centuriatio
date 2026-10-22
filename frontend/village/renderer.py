@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pygame
 
+from pathlib import Path
+
 from .map import Building, VillageMap
 
 
