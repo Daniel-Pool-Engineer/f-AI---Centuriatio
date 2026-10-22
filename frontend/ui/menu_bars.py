@@ -76,6 +76,9 @@ class BottomMenuBar(FloatingMenuBar):
         self.on_control = on_control
         self.active_disruption: str | None = None
         self.status_text = ""
+        self._title_surface = None
+        self._status_surface = None
+        self._last_status_text = ""
 
         self.disruption_buttons = [
             Button(name, on_click=lambda name=name: self.toggle_disruption(name))
@@ -173,16 +176,23 @@ class BottomMenuBar(FloatingMenuBar):
 
     def draw(self, surface: pygame.Surface) -> None:
         super().draw(surface)
-        label = self.font.render("X-Factor menu", True, self.text_color)
-        label_rect = label.get_rect(
+
+        if self._title_surface is None:
+            self._title_surface = self.font.render("X-Factor menu", True, self.text_color)
+
+        label_rect = self._title_surface.get_rect(
             midtop=(self.rect.centerx, self.rect.top + self.padding // 2)
         )
-        surface.blit(label, label_rect)
+        surface.blit(self._title_surface, label_rect)
 
         # day/time status on the left
         if self.status_text:
-            status = self.font.render(self.status_text, True, self.text_color)
-            surface.blit(status, (self.rect.left + self.padding * 2, self.rect.top + self.padding // 2))
+            if self.status_text != self._last_status_text:
+                self._status_surface = self.font.render(self.status_text, True, self.text_color)
+                self._last_status_text = self.status_text
+
+                
+            surface.blit(self._status_surface, (self.rect.left + self.padding * 2, self.rect.top + self.padding // 2))
 
         for button in self.buttons:
             button.draw(surface)
@@ -204,14 +214,20 @@ class RightMenuBar(FloatingMenuBar):
         self.max_entries = max_entries
         self.entries: list[str] = []  # newest entry first
 
+        self._title_surface = None
+        self._entry_cache: dict [ str, pygame.Surface] ={}
+
     def add_entry(self, text: str) -> None:
-        """add a line to the top of the villager journal"""
-        self.entries.insert(0, text)
-        del self.entries[self.max_entries:]
+        """add a line to the bottom of the villager journal"""
+        self.entries.append(text)
+        # Remove the oldest entry if we exceed the max
+        if len(self.entries) > self.max_entries:
+            self.entries.pop(0)
 
     def clear(self) -> None:
         # remove every journal entry (used by reset)
         self.entries.clear()
+        self._entry_cache.clear()
 
     def resize(self, surface_size: tuple[int, int]) -> None:
         width, height = surface_size
@@ -241,29 +257,54 @@ class RightMenuBar(FloatingMenuBar):
 
     def draw(self, surface: pygame.Surface) -> None:
         super().draw(surface)
-        label = self.font.render("Villager Journal", True, self.text_color)
-        # label = pygame.transform.rotate(label, 90)
-        label_rect = label.get_rect(
+        
+        if self._title_surface is None:
+            self._title_surface = self.font.render("Villager Journal", True, self.text_color)
+            
+        label_rect = self._title_surface.get_rect(
             midtop=(self.rect.centerx, self.rect.top + self.font.get_linesize() // 2)
         )
-        surface.blit(label, label_rect)
+        surface.blit(self._title_surface, label_rect)
 
-        # keep journal text from spilling outside the panel
         previous_clip = surface.get_clip()
         surface.set_clip(self.rect.inflate(-4, -4))
 
         text_width = self.rect.width - self.padding * 2
         line_height = self.entry_font.get_linesize()
-        y = label_rect.bottom + self.padding
-
+        start_y = label_rect.bottom + self.padding
+        max_y = self.rect.bottom - self.padding
+        
+        # 1. Flatten entries into wrapped lines (keeping track of where gaps go)
+        all_lines = []
         for entry in self.entries:
-            for line in self._wrap_text(entry, text_width):
-                if y + line_height > self.rect.bottom - self.padding:
-                    surface.set_clip(previous_clip)
-                    return
-                text = self.entry_font.render(line, True, self.text_color)
-                surface.blit(text, (self.rect.left + self.padding, y))
-                y += line_height
-            y += self.entry_gap
+            wrapped = self._wrap_text(entry, text_width)
+            for i, line in enumerate(wrapped):
+                # is this the last line of the entry? (so we add a gap after)
+                is_last_line = (i == len(wrapped) - 1)
+                all_lines.append((line, is_last_line))
+        
+        # 2. Work backwards from the bottom to see which lines fit on screen
+        lines_to_draw = []
+        current_y = max_y
+        
+        for line, is_last in reversed(all_lines):
+            needed_height = line_height + (self.entry_gap if is_last else 0)
+            if current_y - needed_height < start_y:
+                break # We ran out of vertical space
+            lines_to_draw.append((line, is_last))
+            current_y -= needed_height
+            
+        # 3. Reverse back to chronological order (oldest -> newest) and draw
+        lines_to_draw.reverse()
+        
+        y = start_y
+        for line, is_last in lines_to_draw:
+            if line not in self._entry_cache:
+                self._entry_cache[line] = self.entry_font.render(line, True, self.text_color)
+            
+            surface.blit(self._entry_cache[line], (self.rect.left + self.padding, y))
+            y += line_height
+            if is_last:
+                y += self.entry_gap
 
         surface.set_clip(previous_clip)
