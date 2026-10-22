@@ -18,32 +18,53 @@ CITIZEN = RoleProfile(
     speed=1.0,
 )
 
-DOCTOR = RoleProfile(
-    role="doctor",
+FIREFIGHTER = RoleProfile(
+    role="first_responder",
+    workplace="police",
     permitted_actions={
-        "treat", "check_backup", "protect_medicine", "monitor", "conserve",
-        "request_supplies", "stay", "travel",
+        "work", "shop", "patrol", "assist_residents", "check_for_help_needed", 
+        "return_home", "stay", "travel"
     },
-    identity_line="You are a doctor at the village hospital.",
+    identity_line="You are a first responder (firefighter) of the village.",
     role_guidance=(
-        "During normal days treat patients and keep the hospital running. "
-        "During an outage check backup power, protect medication, conserve "
-        "supplies, and only travel if urgent."
+        "During normal days you work at the police station. "
+        "During an outage, you must patrol DIFFERENT areas of the map "
+        "(e.g., hospital, home_a, home_b, home_c, home_d, grocery, electrical). "
+        "Do not stay in one place. Check for help needed and assist residents."
     ),
-    speed=1.0,
+    speed=1.0
 )
 
-FIRST_RESPONDER = RoleProfile(
-    role="first_responder",
+ELECTRICIAN = RoleProfile(
+    role = "electrician",
+    workplace="electrical",
     permitted_actions={
-        "patrol", "inspect", "check_residents", "distribute_supplies", "assist_vulnerable",
-        "stay", "travel",
+        "work", "shop", "check_supplies", "order_supplies", "inspect", "maintain_safe_area", "restore_power", "return_home", "stay", "travel"
     },
-    identity_line="You are a first responder serving the village.",
+    identity_line="You are an electrician of the village.",
     role_guidance=(
-        "During normal days patrol public areas and check on residents. "
-        "During an outage inspect districts, check residents, distribute "
-        "batteries, assist vulnerable people, and patrol dark areas."
+        "During normal days you work, shop, and return home at night. "
+        "During an outage, inspect electrical failures, "
+        "identify required repairs, "
+        "order necessary components, "
+        "maintain a safe repair area, "
+        "restore power when the required equipment becomes available."
     ),
-    speed=1.2,
+        speed = 1.0
+)
+
+DOCTOR = RoleProfile(
+    role="doctor",
+    workplace="hospital",
+    permitted_actions={
+        "work", "check_backup", "protect_medication", "conserve", 
+        "request_resources", "return_home", "stay", "travel"
+    },
+    identity_line="You are the doctor of the village hospital.",
+    role_guidance=(
+        "During normal days you work at the hospital and return home at night. "
+        "During an outage, check the hospital backup power, protect medication, "
+        "reduce non-essential use, and monitor patients. Request resources if needed."
+    ),
+    speed=1.0
 )

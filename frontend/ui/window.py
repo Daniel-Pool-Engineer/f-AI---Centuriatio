@@ -12,33 +12,6 @@ from backend.simulation_loop import BackendSimulation
 # frontend imports
 from frontend.ui.menu_bars import BottomMenuBar, RightMenuBar
 from frontend.village.map import create_test_map
-<<<<<<< HEAD
-from frontend.village.renderer import VillageMapRenderer
-
-#Backend imports
-from backend.agent.client import LLMClient
-from backend.agent.profile import CITIZEN, DOCTOR, FIRST_RESPONDER
-from frontend.village.villager import Villager
-
-pygame.init()
-
-screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
-pygame.display.set_caption("Centuriatio")
-
-village_map = create_test_map()
-renderer = VillageMapRenderer()
-
-_llm = LLMClient()
-villagers = [
-    Villager("m1", "Maria", CITIZEN, "home_a", _llm, village_map),
-    Villager("d1", "James", DOCTOR, "hospital", _llm, village_map),
-    Villager("f1", "Daniel", FIRST_RESPONDER, "fire", _llm, village_map),
-]
-
-clock = pygame.time.Clock()
-bottom_menu = BottomMenuBar()
-right_menu = RightMenuBar()
-=======
 from frontend.village.navigation import route
 from frontend.village.renderer import VillageMapRenderer
 from frontend.village.sprite import VillagerSprite
@@ -69,7 +42,6 @@ pygame.display.set_caption("Centuriatio")
 
 clock = pygame.time.Clock()   # frame timer (60 FPS)
 sim_clock = Clock()           # in-game day/night clock from the backend
->>>>>>> keyla-ui
 is_panning = False
 last_mouse_position: tuple[int, int] | None = None
 MAX_ZOOM = 1.0
@@ -474,9 +446,16 @@ while True:
         log_period()
         log("Night falls, villagers head home" if phase == "Night" else "Morning, villagers start their day")
 
-    #screen.fill("white")  # Fill the display with a solid color
-    for villager in villagers:
-        villager.update(dt_seconds, village_map)
+    # everything moves faster at 2x and stops when paused
+    sim_dt = 0 if sim_clock.paused else dt * sim_clock.speed
+    for message in villagers.update(sim_dt):
+        log(message)
+    update_agents(sim_dt)
+
+    status = f"{period_label()}  ·  {sim_clock.get_time()}"
+    if sim_clock.paused:
+        status += "  ·  Paused"
+    bottom_menu.set_status(status)
 
     # Render the graphics here.
     renderer.draw(
@@ -485,9 +464,14 @@ while True:
         show_grid=True,
         show_labels=True,
     )
-    for villager in villagers:
-        renderer.draw_sprite(screen, villager.sprite)
-    
+    if sim_clock.day_night == "Night":
+        draw_overlay(90)
+    if active_disruption == "Power Outage":
+        draw_overlay(140)
+    villagers.draw(screen, renderer)
+    draw_maria()
+    if maria_selected or maria_hit_test(pygame.mouse.get_pos()):
+        draw_maria_info()
     right_menu.draw(screen)
     bottom_menu.draw(screen)
 

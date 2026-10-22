@@ -91,11 +91,11 @@ class VillageMapRenderer:
             "office",
         ]
 
-        for icon_name in icon_names:
-            path = icon_folder / f"{icon_name}.png"
+        #for icon_name in icon_names:
+        #    path = icon_folder / f"{icon_name}.png"
 
-            if path.exists():
-                self.building_icons[icon_name] = pygame.image.load(path).convert_alpha()
+        #    if path.exists():
+        #        self.building_icons[icon_name] = pygame.image.load(path).convert_alpha()
 
     def set_camera(self, x: float, y: float) -> None:
         self.camera_x = x
