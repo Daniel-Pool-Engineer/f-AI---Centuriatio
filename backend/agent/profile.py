@@ -4,6 +4,7 @@ from backend.agent.agent import RoleProfile
 # Note: permitted_action must match exactly.
 CITIZEN = RoleProfile(
     role="citizen",
+    workplace="office",
     permitted_actions={
         "work", "shop", "check_supplies", "conserve", "seek_help",
         "return_home", "stay", "travel",
