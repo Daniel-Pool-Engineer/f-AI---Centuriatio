@@ -13,7 +13,7 @@ LOCATIONS = {
     "home_b":     "Home B",
     "home_c":     "Home C",
     "home_d":     "Home D",
-    "work":       "Work"
+    "office":       "Office"
 }
 
 # Edges = roads. Undirected, no weights.
@@ -34,7 +34,7 @@ EDGES = [
     ("home_a",     "home_b"),
     ("home_b",     "home_c"),
     ("home_c",     "home_d"),
-    ("home_a",     "work")
+    ("home_a",     "office")
 ]
 
 
