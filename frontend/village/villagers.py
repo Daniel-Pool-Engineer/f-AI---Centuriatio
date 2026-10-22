@@ -11,6 +11,8 @@ import pygame
 
 from .map import Building, Sidewalk, VillageMap
 from .renderer import VillageMapRenderer
+from backend.agent.agent import VillagerAgent, VillagerContext
+from backend.agent.profile import CITIZEN, FIREFIGHTER, ELECTRICIAN, DOCTOR
 
 
 Color = tuple[int, int, int]
@@ -21,14 +23,21 @@ CROSSWALK_GAP = 100    # sidewalks this close are connected by a road crossing
 
 # name, home building, color (building ids match backend/map/graph.py)
 STARTING_VILLAGERS = [
-    ("Ana", "home_a", (220, 60, 60)),
-    ("Ben", "home_b", (40, 120, 220)),
-    ("Carla", "home_b", (240, 140, 20)),
-    ("Diego", "home_c", (30, 160, 90)),
-    ("Elena", "home_d", (170, 60, 190)),
-    ("Felix", "home_b", (20, 20, 20)),
+    ("v_ana", "Dr. Ana", "home_a", (220, 60, 60), DOCTOR),        # Doctor
+    ("v_ben", "Ben", "home_b", (40, 120, 220), FIREFIGHTER),      # First Responder
+    ("v_carla", "Carla", "home_b", (240, 140, 20), ELECTRICIAN),  # Electrician
+    ("v_diego", "Diego", "home_c", (30, 160, 90), CITIZEN),       # Citizen
+    ("v_elena", "Elena", "home_d", (170, 60, 190), CITIZEN),      # Citizen
+    ("v_felix", "Felix", "home_b", (20, 20, 20), CITIZEN),        # Citizen
 ]
 
+SCRIPTED_NPCS = [
+    ("npc_1", "Sam", "home_c", (100, 200, 150)),
+    ("npc_2", "Lily", "home_d", (200, 100, 250)),
+    ("npc_3", "Jack", "home_b", (150, 150, 50)),
+    ("npc_4", "Chloe", "home_a", (250, 150, 150)),
+    ("npc_5", "Tom", "home_c", (50, 200, 200)),
+]
 
 def _rect_gap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
     # distance between two rectangles (0 if they touch)
@@ -100,16 +109,20 @@ class SidewalkNetwork:
 
 @dataclass
 class Villager:
+    agent_id: str
     name: str
     home_id: str
     color: Color
     position: Vec
     sidewalk_id: str
-    location_id: str | None            # building they are at, None while walking
+    location_id: str | None   # building they are at, None while walking
+    agent: VillagerAgent | None
     destination_id: str | None = None
     waypoints: list[tuple[Vec, str]] = field(default_factory=list)
-    wait_time: float = 0.0             # seconds before leaving the current building
-    offset: Vec = (0.0, 0.0)           # small shift so villagers don't overlap
+    wait_time: float = 0.0   # seconds before leaving the current building
+    offset: Vec = (0.0, 0.0)   # small shift so villagers don't overlap
+    previous_action: str | None = None
+    is_scripted: bool = False
 
     @property
     def is_walking(self) -> bool:
@@ -128,37 +141,39 @@ class VillagerManager:
         self.power_outage = False
         self.is_night = False
         self.font = pygame.font.Font(None, 16)
+        self._label_cache: dict[str, pygame.Surface] = {}
         self.villagers = [
-            self._spawn(name, home_id, color) for name, home_id, color in STARTING_VILLAGERS
+            self._spawn(v_id, name, home_id, color, profile) 
+            for v_id, name, home_id, color, profile in STARTING_VILLAGERS
         ]
+        for v_id, name, home_id, color in SCRIPTED_NPCS:
+            npc = self._spawn(v_id, name, home_id, color, None)
+            npc.is_scripted = True
+            npc.wait_time = self.rng.uniform(1.0, 5.0)
+            self.villagers.append(npc)
 
-    def _spawn(self, name: str, home_id: str, color: Color) -> Villager:
-        # start each villager at their home entrance
+    def _spawn(self, agent_id: str, name: str, home_id: str, color: Color, profile) -> Villager:
         home = self.buildings[home_id]
+        agent = VillagerAgent(agent_id, name, profile)
+        
         return Villager(
+            agent_id=agent_id,
             name=name,
             home_id=home_id,
             color=color,
             position=(float(home.entrance[0]), float(home.entrance[1])),
             sidewalk_id=home.sidewalk_id,
             location_id=home_id,
+            agent=agent,
             wait_time=self.rng.uniform(0.5, 4.0),
             offset=(self.rng.uniform(-10, 10), self.rng.uniform(-10, 10)),
         )
-
-    def set_power_outage(self, active: bool) -> None:
-        # outage: everyone heads to the shelter, restored: back to normal routine
-        self.power_outage = active
-        if active:
-            for villager in self.villagers:
-                already_there = villager.location_id == SHELTER_ID and not villager.is_walking
-                if not already_there:
-                    self.send_to(villager, SHELTER_ID)
-        elif self.is_night:
-            self._send_everyone_home()
-        else:
-            self._wake_up()
-
+    def get_villager(self, agent_id: str) -> Villager | None:
+        for v in self.villagers:
+            if v.agent_id == agent_id:
+                return v
+        return None
+    
     def set_night(self, is_night: bool) -> None:
         # night: villagers go home, morning: they start wandering again
         self.is_night = is_night
@@ -186,11 +201,6 @@ class VillagerManager:
         villager.destination_id = building_id
         villager.location_id = None
 
-    def _pick_destination(self, villager: Villager) -> str:
-        # any building except the one they are in
-        choices = [b for b in self.buildings if b != villager.location_id]
-        return self.rng.choice(choices)
-
     def _walk(self, villager: Villager, dt: float) -> bool:
         # move along the waypoints, returns True when the trip is finished
         distance = self.walk_speed * dt
@@ -211,8 +221,39 @@ class VillagerManager:
                 distance = 0
         return not villager.waypoints
 
+    def set_power_outage(self, active: bool) -> list[str]:
+        messages: list[str] = []
+        self.power_outage = active
+        
+        if active:
+            for villager in self.villagers:
+                if villager.is_scripted:
+                    # NPCs instantly head home to evacuate
+                    self.send_to(villager, villager.home_id)
+                    messages.append(f"{villager.name} is evacuating indoors")
+                    continue
+
+                if villager.is_walking:
+                    # If they are walking, let them finish their current trip first
+                    continue
+                
+                # If they are standing around, make them ask the AI what to do right now
+                villager.wait_time = 0.0
+
+                # Clear their old destination so they don't accidentally go back
+                villager.destination_id = None 
+                
+                if villager.agent.profile.role == "citizen":
+                    messages.append(f"{villager.name} is checking supplies")
+        elif self.is_night:
+            self._send_everyone_home()
+        else:
+            self._wake_up()
+            
+        return messages
+    
     def update(self, dt: float) -> list[str]:
-        # move villagers, returns journal messages for anything that happened
+        """move villagers, returns journal messages for anything that happened"""
         messages: list[str] = []
         for villager in self.villagers:
             if villager.is_walking:
@@ -222,81 +263,48 @@ class VillagerManager:
                     villager.wait_time = self.rng.uniform(3.0, 8.0)
                     place = self.buildings[villager.location_id].display_name
                     messages.append(f"{villager.name} arrived at {place}")
-            elif not self.power_outage and not self.is_night:
-                # villagers only wander during a normal day
-                villager.wait_time -= dt
-                if villager.wait_time <= 0:
-                    self.send_to(villager, self._pick_destination(villager))
+            elif not self.is_night:
+                if villager.wait_time > 0:
+                    villager.wait_time -= dt
+                elif villager.is_scripted and not self.power_outage:
+                    # Scripted NPCs wander to random buildings periodically
+                    if villager.wait_time <= 0:
+                        choices = [b for b in self.buildings if b != villager.location_id]
+                        dest = self.rng.choice(choices)
+                        self.send_to(villager, dest)
+                        villager.wait_time = self.rng.uniform(15.0, 30.0)
+                        
         return messages
-
+   
     def draw(self, surface: pygame.Surface, renderer: VillageMapRenderer) -> None:
         for villager in self.villagers:
             x, y = villager.position
             offset_x, offset_y = villager.offset
 
-            screen_pos = renderer.world_to_screen(
-                (x + offset_x, y + offset_y)
-            )
-
+            screen_pos = renderer.world_to_screen((x + offset_x, y + offset_y))
             radius = max(5, round(9 * renderer.zoom))
 
-            # body
-            body_rect = pygame.Rect(
-                screen_pos[0] - radius,
-                screen_pos[1] - radius,
-                radius * 2,
-                radius * 2,
-            )
+            pygame.draw.circle(surface, villager.color, screen_pos, radius)
+            pygame.draw.circle(surface, (255, 255, 255), screen_pos, radius, width=2)
 
-            pygame.draw.circle(
-                surface,
-                villager.color,
-                screen_pos,
-                radius,
-            )
+            head_pos = (screen_pos[0], screen_pos[1] - radius)
+            pygame.draw.circle(surface, (240, 200, 170), head_pos, max(3, radius // 2))
 
-            pygame.draw.circle(
-                surface,
-                (255, 255, 255),
-                screen_pos,
-                radius,
-                width=2,
-            )
-
-            # small head
-            head_pos = (
-                screen_pos[0],
-                screen_pos[1] - radius,
-            )
-
-            pygame.draw.circle(
-                surface,
-                (240, 200, 170),
-                head_pos,
-                max(3, radius // 2),
-            )
-
-            label = self.font.render(
-                villager.name,
-                True,
-                (20, 20, 20),
-            )
-
+            if villager.name not in self._label_cache:
+                if villager.is_scripted:
+                    label_text = villager.name
+                else:
+                    role_display = villager.agent.profile.role.replace("_", " ").title()
+                    label_text = f"{villager.name} ({role_display})"
+                
+                self._label_cache[villager.name] = self.font.render(label_text, True, (20, 20, 20))
+            
+            label = self._label_cache[villager.name]
             label_rect = label.get_rect(
-                midbottom=(
-                    screen_pos[0],
-                    screen_pos[1] - radius - 5,
-                )
+                midbottom=(screen_pos[0], screen_pos[1] - radius - 5)
             )
-
-            # little white background behind the name
             label_background = label_rect.inflate(6, 3)
 
-            pygame.draw.rect(
-                surface,
-                (245, 245, 240),
-                label_background,
-                border_radius=3,
-            )
-
+            pygame.draw.rect(surface, (245, 245, 240), label_background, border_radius=3)
             surface.blit(label, label_rect)
+
