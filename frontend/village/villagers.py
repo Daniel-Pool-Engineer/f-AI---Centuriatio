@@ -307,4 +307,3 @@ class VillagerManager:
 
             pygame.draw.rect(surface, (245, 245, 240), label_background, border_radius=3)
             surface.blit(label, label_rect)
-
