@@ -46,7 +46,7 @@ class VillageMapRenderer:
         self.camera_x, self.camera_y = camera
         self.zoom = zoom
         self.font = pygame.font.Font(None, 18)
-
+        
     def set_camera(self, x: float, y: float) -> None:
         self.camera_x = x
         self.camera_y = y
