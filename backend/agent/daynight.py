@@ -1,9 +1,9 @@
 from typing import Tuple, List
 
 class Clock:
-    # 3 min for day, 1 min for night (in seconds)
-    day_length = 180
-    night_length = 60
+    # 1 min for day, 30 min for night (in seconds)
+    day_length = 60
+    night_length = 30
 
     def __init__(self) -> None:
         self.reset()
