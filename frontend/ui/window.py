@@ -35,10 +35,11 @@ backend_sim = BackendSimulation(world_state, llm_client)
 backend_sim.start()
 
 village_map = create_test_map()
-renderer = VillageMapRenderer()
 
 screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
 pygame.display.set_caption("Centuriatio")
+
+renderer = VillageMapRenderer()
 
 clock = pygame.time.Clock()   # frame timer (60 FPS)
 sim_clock = Clock()           # in-game day/night clock from the backend
