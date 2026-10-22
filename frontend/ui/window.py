@@ -3,9 +3,11 @@ from math import hypot
 import pygame
 
 # backend imports
-from backend.agent.agent import VillagerAgent, VillagerContext
 from backend.agent.daynight import Clock
-from backend.agent.profile import CITIZEN
+from backend.agent.agent import VillagerAgent, VillagerContext
+from backend.agent.profile import CITIZEN, FIREFIGHTER, ELECTRICIAN, DOCTOR
+from backend.simulation_state import WorldState
+from backend.simulation_loop import BackendSimulation
 
 # frontend imports
 from frontend.ui.menu_bars import BottomMenuBar, RightMenuBar
@@ -27,6 +29,10 @@ except Exception as exc:
 
 OUTAGE_DURATION_DAYS = 3        # fixed for now, a duration selector can replace this later
 OUTAGE_AREA = "whole village"
+
+world_state = WorldState()
+backend_sim = BackendSimulation(world_state, llm_client)
+backend_sim.start()
 
 village_map = create_test_map()
 renderer = VillageMapRenderer()
@@ -105,11 +111,11 @@ def handle_disruption(name: str, is_active: bool) -> None:
         log_period()
 
     if name == "Power Outage":
-        villagers.set_power_outage(is_active)
-        maria_cooldown = 0.0  # let Maria react right away
-        if is_active:
-            log(f"Villagers are heading to the {SHELTER_ID}")
-        else:
+        # Villagers log their own departure individually
+        for message in villagers.set_power_outage(is_active):
+            log(message)
+        maria_cooldown = 0.0
+        if not is_active:
             log("Power restored, villagers go back to their routine")
 
 
@@ -212,42 +218,21 @@ def zoom_at(position: tuple[int, int], direction: int) -> None:
     )
     clamp_camera()
 
+_overlay_surface = None
 
 def draw_overlay(alpha: int) -> None:
-    # darken the map (used for night and power outages)
-    overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-    overlay.fill((10, 15, 40, alpha))
-    screen.blit(overlay, (0, 0))
+    global _overlay_surface
+    if _overlay_surface is None or _overlay_surface.get_size() != screen.get_size():
+        _overlay_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+    
+    _overlay_surface.fill((10, 15, 40, alpha))
+    screen.blit(_overlay_surface, (0, 0))
 
 
-def update_maria(sim_dt: float) -> None:
-    # move Maria, and ask her AI agent for a new action when she is idle
-    global maria_cooldown, maria_previous_action, maria_current_task, maria_location
-    maria.update(sim_dt)
-    maria_cooldown -= sim_dt
-    if maria.path or maria_cooldown > 0 or sim_clock.paused:
-        return
-    maria_cooldown = 2.0
-
-    # give the agent the real state of the village
-    outage = active_disruption == "Power Outage"
-    ctx = VillagerContext(
-        villager_id="m1",
-        name="Maria",
-        location_id=maria_location,
-        day=sim_clock.day_number,
-        phase=sim_clock.day_night.lower(),
-        crisis_active=outage,
-        crisis_day=outage_day() if outage else 0,
-        crisis_duration=OUTAGE_DURATION_DAYS if outage else 0,
-        crisis_area=OUTAGE_AREA if outage else None,
-        power_on=not outage,
-        previous_action=maria_previous_action,
-    )
-    action = maria_agent.decide(ctx)
+def apply_maria_action(action) -> None:
+    global maria_previous_action, maria_current_task, maria_location
     print(f"Maria: {action.action} -> {action.target_location} | {action.journal}")
 
-    # only log to the journal when she starts something new
     if action.journal and action.action != maria_previous_action:
         log(f"Maria: {action.journal}")
 
@@ -263,6 +248,89 @@ def update_maria(sim_dt: float) -> None:
         except (ValueError, KeyError) as exc:
             print(f"  route failed: {exc}")
 
+
+def update_agents(sim_dt: float) -> None:
+    global maria_cooldown
+    
+    # Process results from the backend AI, the output of the batch system
+    with world_state.lock:
+        if world_state.is_data_ready:
+            for v_id, action in world_state.new_actions.items():
+                if v_id == "m1":
+                    apply_maria_action(action)
+                else:
+                    villager = villagers.get_villager(v_id)
+                    if villager:
+                        print(f"{villager.name}: {action.action} -> {action.target_location}")
+                        if action.journal:
+                            log(f"{villager.name}: {action.journal}")
+                        
+                        villager.previous_action = action.action
+                        
+                        if action.target_location and action.target_location != villager.location_id:
+                            try:
+                                villagers.send_to(villager, action.target_location)
+                                villager.wait_time = 999.0 # Freeze timer while walking
+                            except (ValueError, KeyError) as exc:
+                                print(f"  route failed for {villager.name}: {exc}")
+                                villager.wait_time = 5.0
+                        else:
+                            if villager.agent.profile.role == "first_responder" and villager.location_id != "school":
+                                choices = [b for b in villagers.buildings if b != villager.location_id]
+                                next_patrol = villagers.rng.choice(choices)
+                                try:
+                                    villagers.send_to(villager, next_patrol)
+                                    villager.wait_time = 999.0
+                                except Exception:
+                                    villager.wait_time = 5.0
+                            else:
+                                villager.wait_time = 5.0
+            
+            world_state.is_data_ready = False
+            world_state.new_actions.clear()
+
+    maria.update(sim_dt)
+    maria_cooldown -= sim_dt
+
+    if sim_clock.paused:
+        return
+
+    if not maria.path and maria_cooldown <= 0:
+        if not backend_sim.is_queued("m1"):
+            outage = active_disruption == "Power Outage"
+            ctx = VillagerContext(
+                villager_id="m1", name="Maria", location_id=maria_location,
+                day=sim_clock.day_number, phase=sim_clock.day_night.lower(),
+                crisis_active=outage, crisis_day=outage_day() if outage else 0,
+                crisis_duration=OUTAGE_DURATION_DAYS if outage else 0,
+                crisis_area=OUTAGE_AREA if outage else None,
+                power_on=not outage, previous_action=maria_previous_action,
+            )
+            backend_sim.queue_agent("m1", maria_agent, ctx)
+            maria_cooldown = 5.0
+
+    for villager in villagers.villagers:
+        if villager.is_scripted:
+            continue
+        if not villager.is_walking and villager.wait_time <= 0:
+            if not backend_sim.is_queued(villager.agent_id):
+                outage = active_disruption == "Power Outage"
+                ctx = VillagerContext(
+                    villager_id=villager.agent_id, 
+                    name=villager.name, 
+                    location_id=villager.location_id or "unknown",
+                    day=sim_clock.day_number, 
+                    phase=sim_clock.day_night.lower(),
+                    crisis_active=outage, 
+                    crisis_day=outage_day() if outage else 0,
+                    crisis_duration=OUTAGE_DURATION_DAYS if outage else 0,
+                    crisis_area=OUTAGE_AREA if outage else None,
+                    power_on=not outage, 
+                    previous_action=villager.previous_action,
+                )
+                # Send them to the backend queue
+                backend_sim.queue_agent(villager.agent_id, villager.agent, ctx)
+                villager.wait_time = 999.0
 
 def maria_screen_position() -> tuple[int, int]:
     return renderer.world_to_screen((int(maria.x), int(maria.y)))
@@ -280,7 +348,7 @@ def draw_maria() -> None:
     position = maria_screen_position()
     pygame.draw.circle(screen, maria.color, position, maria.radius)
     pygame.draw.circle(screen, (255, 255, 255), position, maria.radius, width=2)
-    label = info_font.render("Maria (AI)", True, (20, 20, 20))
+    label = info_font.render("Maria (YOU)", True, (20, 20, 20))
     label_rect = label.get_rect(midbottom=(position[0], position[1] - maria.radius - 5))
     pygame.draw.rect(screen, (255, 230, 140), label_rect.inflate(6, 3), border_radius=3)
     screen.blit(label, label_rect)
@@ -382,7 +450,7 @@ while True:
     sim_dt = 0 if sim_clock.paused else dt * sim_clock.speed
     for message in villagers.update(sim_dt):
         log(message)
-    update_maria(sim_dt)
+    update_agents(sim_dt)
 
     status = f"{period_label()}  ·  {sim_clock.get_time()}"
     if sim_clock.paused:
