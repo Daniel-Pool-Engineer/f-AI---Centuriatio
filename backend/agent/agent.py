@@ -15,6 +15,7 @@ class RoleProfile:
     permitted_actions: Set[str]
     identity_line: str
     role_guidance: str
+    workplace: str = "office"
     speed: float = 1.0
     fallback_action: str = "wait"
     fallback_journal: str = "{name} stayed put; no valid action was chosen."
@@ -83,6 +84,89 @@ class VillagerAgent:
             return self.fallback(ctx)
 
         return action
+    
+    @classmethod
+    def decide_batch(
+        cls, 
+        requests: list[tuple[str, "VillagerAgent", VillagerContext]], 
+        llm_client: Optional[Any] = None
+    ) -> dict[str, ActionRequest]:
+        
+        """Process multiple villager decisions in a single LLM call."""
+        if not requests:
+            return {}
+        if llm_client is None:
+            return {v_id: agent.fallback(ctx) for v_id, agent, ctx in requests}
+
+        # 1. Batch system prompt
+        system = (
+            "You are the decision engine for multiple villagers in a village simulation.\n"
+            "You must reply with a single JSON array of objects, one for each villager in the exact order they are presented.\n"
+            "Schema for each object:\n"
+            '{"action": "<action>", "target_location": "<location id or null>", "journal": "<one short sentence>"}\n'
+            "Do not explain. Do not add fields."
+        )
+
+        # 2. Combined user prompt
+        user_lines = []
+        for i, (v_id, agent, ctx) in enumerate(requests):
+            crisis_line = (
+                f"Crisis: power outage, day {ctx.crisis_day} of {ctx.crisis_duration}, affected area: {ctx.crisis_area}."
+                if ctx.crisis_active else "Crisis: none."
+            )
+            user_lines.append(
+                f"--- VILLAGER {i} (ID: {v_id}) ---\n"
+                f"Name: {agent.name}\n"
+                f"Role: {agent.role}\n"
+                f"Role guidance: {agent.profile.role_guidance}\n"
+                f"Location: {ctx.location_id}\n"
+                f"Time: Day {ctx.day}, {ctx.phase}\n"
+                f"{crisis_line}\n"
+                f"Power: {'on' if ctx.power_on else 'off'}\n"
+                f"Previous action: {ctx.previous_action or 'none'}\n"
+                f"Permitted actions: {sorted(agent.profile.permitted_actions)}\n"
+                f"Valid locations: {sorted(VillageMap.locations)}\n"
+            )
+        user = "\n".join(user_lines) + "\nChoose the next action for each villager in the array."
+
+        try:
+            raw = llm_client.chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
+            
+            # Clean potential markdown formatting from LLM
+            raw = raw.strip()
+            if raw.startswith("```json"):
+                raw = raw[7:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+            
+            data = json.loads(raw)
+
+            if not isinstance(data, list):
+                raise ValueError("Expected a JSON array from batch LLM response")
+            if len(data) != len(requests):
+                raise ValueError(f"Expected {len(requests)} actions, got {len(data)}")
+
+            results = {}
+            for i, (v_id, agent, ctx) in enumerate(requests):
+                item = data[i]
+                action_str = str(item.get("action", "")).strip()
+                
+                if action_str not in agent.profile.permitted_actions:
+                    results[v_id] = agent.fallback(ctx)
+                else:
+                    results[v_id] = ActionRequest(
+                        action=action_str,
+                        target_location=item.get("target_location") or None,
+                        journal=str(item.get("journal", "")).strip()
+                    )
+            return results
+
+        except Exception as exc:
+            logger.warning("Batch LLM failure: %s", exc)
+            # Fallback everyone if the API fails or parses incorrectly
+            return {v_id: agent.fallback(ctx) for v_id, agent, ctx in requests}
+
 
     def fallback(self, ctx: VillagerContext) -> ActionRequest:
         return ActionRequest(
@@ -113,6 +197,8 @@ class VillagerAgent:
 
         user = (
             f"Villager: {self.name} (id={self.villager_id})\n"
+            f"Role: {self.profile.role}\n"
+            f"Workplace: {self.profile.workplace}\n"
             f"Location: {ctx.location_id}\n"
             f"Time: Day {ctx.day}, {ctx.phase}\n"
             f"{crisis_line}\n"
