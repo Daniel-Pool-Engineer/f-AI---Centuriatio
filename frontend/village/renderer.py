@@ -32,36 +32,11 @@ class VillageMapRenderer:
     shadow_color: Color = (170, 173, 164)
 
     building_colors: dict[str, Color] = {
-        # Houses
-        "home_a": (196, 145, 105),      # warm brown
-        "home_b": (185, 185, 190),      # light gray apartment
-        "home_c": (170, 120, 145),      # muted pink
-        "home_d": (125, 155, 190),      # muted blue
-
-        # Public / community buildings
-        "hospital": (235, 235, 228),    # off-white
-        "fire": (178, 65, 55),          # fire-station red
-        "police": (75, 95, 130),        # dark blue
-        "school": (205, 175, 75),       # yellow
-        "grocery": (190, 145, 75),      # warm tan
-        "electrical": (125, 130, 128),  # gray utility building
-
-        # Work / office
-        "work": (145, 155, 165),        # gray-blue office
-    }
-    building_border_colors: dict[str, Color] = {
-        "home_a": (130, 85, 60),
-        "home_b": (105, 105, 110),
-        "home_c": (115, 75, 95),
-        "home_d": (75, 100, 130),
-
-        "hospital": (180, 180, 175),
-        "fire": (125, 40, 35),
-        "police": (45, 60, 85),
-        "school": (145, 120, 45),
-        "grocery": (135, 95, 45),
-        "electrical": (80, 85, 84),
-        "work": (90, 100, 110),
+        "house": (193, 137, 105),
+        "apartment": (157, 128, 181),
+        "shop": (220, 175, 78),
+        "office": (105, 148, 190),
+        "public": (124, 169, 127),
     }
 
     def __init__(
@@ -72,31 +47,8 @@ class VillageMapRenderer:
     ) -> None:
         self.camera_x, self.camera_y = camera
         self.zoom = zoom
-        self.font = pygame.font.Font(None, 16)
-
-        # Adds PNG Icons from Assets
-        self.building_icons = {}
-
-        icon_folder = Path(__file__).parent.parent / "assets" / "buildings"
-
-        icon_names = [
-            "house",
-            "apartment",
-            "hospital",
-            "grocery",
-            "school",
-            "fire",
-            "police",
-            "electrical",
-            "office",
-        ]
-
-        #for icon_name in icon_names:
-        #    path = icon_folder / f"{icon_name}.png"
-
-        #    if path.exists():
-        #        self.building_icons[icon_name] = pygame.image.load(path).convert_alpha()
-
+        self.font = pygame.font.Font(None, 18)
+        
     def set_camera(self, x: float, y: float) -> None:
         self.camera_x = x
         self.camera_y = y
@@ -185,36 +137,6 @@ class VillageMapRenderer:
         show_labels: bool,
     ) -> None:
         bounds = self._rect_to_screen(building.bounds)
-        color = self.building_colors.get(building.id, (145, 145, 145))
-        pygame.draw.rect(surface, color, bounds, border_radius=max(1, round(4 * self.zoom)))
-        
-        border_color = self.building_border_colors.get(building.id, self.text_color)
-        pygame.draw.rect(surface, border_color, bounds, width=2)
-
-        # Adds the PNG Icon to the Building
-        icon_name = building.id
-
-        if building.id.startswith("home"):
-            icon_name = building.building_type
-
-        if building.id == "work":
-            icon_name = "office"
-
-        icon = self.building_icons.get(icon_name)
-
-        if icon is not None:
-            icon_size = int(min(bounds.width, bounds.height) * 0.45)
-
-            icon = pygame.transform.smoothscale(
-                icon,
-                (icon_size, icon_size),
-            )
-
-            icon_rect = icon.get_rect(
-                center=bounds.center
-            )
-
-            surface.blit(icon, icon_rect)
 
         color = self.building_colors.get(
             building.building_type,
