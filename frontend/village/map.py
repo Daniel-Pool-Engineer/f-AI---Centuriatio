@@ -190,7 +190,7 @@ def create_test_map() -> VillageMap:
             Building("hospital", "public", (1100, 600, 300, 448), (1250, 1048), "northwest-main", 20),
             Building("police", "public", (1700, 700, 300, 348), (1850, 1048), "northeast-main", 10),
             Building("school", "public", (2100, 500, 400, 548), (2300, 1048), "northeast-main", 30),
-            Building("work", "office", (2700, 700, 400, 348), (2900, 1048), "northeast-main", 20),
+            Building("office", "office", (2700, 700, 400, 348), (2900, 1048), "northeast-main", 20),
             Building("fire", "public", (100, 1288, 400, 348), (300, 1288), "southwest-main", 10),
             Building("grocery", "shop", (600, 1288, 400, 400), (800, 1288), "southwest-main", 6),
             Building("electrical", "public", (1700, 1288, 400, 348), (1900, 1288), "southeast-main", 8),
