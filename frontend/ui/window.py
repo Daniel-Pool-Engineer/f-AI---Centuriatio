@@ -1,34 +1,33 @@
+from dataclasses import dataclass
 from math import hypot
 
 import pygame
 
 # backend imports
 from backend.agent.daynight import Clock
-from backend.agent.agent import VillagerAgent, VillagerContext
-from backend.agent.profile import CITIZEN, FIREFIGHTER, ELECTRICIAN, DOCTOR
+from backend.agent.agent import VillagerContext
 from backend.simulation_state import WorldState
 from backend.simulation_loop import BackendSimulation
 
 # frontend imports
 from frontend.ui.menu_bars import BottomMenuBar, RightMenuBar
 from frontend.village.map import create_test_map
-from frontend.village.navigation import route
 from frontend.village.renderer import VillageMapRenderer
-from frontend.village.sprite import VillagerSprite
-from frontend.village.villagers import SHELTER_ID, VillagerManager
+from frontend.village.villagers import Villager, VillagerManager
 
 pygame.init()
 
-# the LLM needs the keys in .env, without them Maria uses her fallback action
+# The LLM needs the keys in .env; without them villagers use their fallback actions.
 try:
     from backend.agent.client import LLMClient
     llm_client = LLMClient()
 except Exception as exc:
-    print(f"LLM not available, Maria will use fallback actions: {exc}")
+    print(f"LLM not available; villagers will use fallback actions: {exc}")
     llm_client = None
 
 OUTAGE_DURATION_DAYS = 3        # fixed for now, a duration selector can replace this later
 OUTAGE_AREA = "whole village"
+VILLAGER_DECISION_COOLDOWN = 5.0
 
 world_state = WorldState()
 backend_sim = BackendSimulation(world_state, llm_client)
@@ -54,26 +53,21 @@ active_disruption: str | None = None
 outage_start_day = 1  # in-game day the outage started on
 
 right_menu = RightMenuBar()
-villagers = VillagerManager(village_map)
+villagers = VillagerManager(village_map, llm_client=llm_client)
 
-# Maria is controlled by the backend AI agent
-maria_agent = VillagerAgent("m1", "Maria", CITIZEN, llm_client=llm_client)
-maria = VillagerSprite(village_map.villager_spawn)
-maria_location = "home_a"
-maria_previous_action: str | None = None
-maria_cooldown = 0.0
-maria_current_task = "Waiting"
-maria_selected = False
+selected_villager_id: str | None = None
 
 
-def reset_maria() -> None:
-    # put Maria back home with no history
-    global maria, maria_location, maria_previous_action, maria_cooldown, maria_current_task
-    maria = VillagerSprite(village_map.villager_spawn)
-    maria_location = "home_a"
-    maria_previous_action = None
-    maria_cooldown = 0.0
-    maria_current_task = "Waiting"
+@dataclass(frozen=True)
+class VillagerPresentation:
+    villager: Villager
+    role: str
+    screen_position: tuple[int, int]
+    radius: int
+
+    @property
+    def villager_id(self) -> str:
+        return self.villager.agent_id
 
 
 def outage_day() -> int:
@@ -100,7 +94,7 @@ def log_period() -> None:
 
 def handle_disruption(name: str, is_active: bool) -> None:
     # called by the X-Factor menu when a disruption starts or ends
-    global active_disruption, outage_start_day, maria_cooldown
+    global active_disruption, outage_start_day
     if is_active:
         active_disruption = name
         outage_start_day = sim_clock.day_number
@@ -115,17 +109,19 @@ def handle_disruption(name: str, is_active: bool) -> None:
         # Villagers log their own departure individually
         for message in villagers.set_power_outage(is_active):
             log(message)
-        maria_cooldown = 0.0
+        for villager in villagers.villagers:
+            if villager.agent is not None:
+                villager.decision_cooldown = 0.0
         if not is_active:
             log("Power restored, villagers go back to their routine")
 
 
 def reset_simulation() -> None:
     # start everything over from Normal Day 1
-    global villagers, active_disruption
+    global villagers, active_disruption, selected_villager_id
     sim_clock.reset()
-    villagers = VillagerManager(village_map)
-    reset_maria()
+    villagers = VillagerManager(village_map, llm_client=llm_client)
+    selected_villager_id = None
     active_disruption = None
     bottom_menu.clear_disruption()
     right_menu.clear()
@@ -151,8 +147,8 @@ bottom_menu = BottomMenuBar(on_disruption=handle_disruption, on_control=handle_c
 def resize_menus() -> None:
     # keep menu bars proportional when the window changes size
     size = screen.get_size()
-    bottom_menu.resize(size)
     right_menu.resize(size)
+    bottom_menu.resize(size, right_edge=right_menu.rect.left)
 
 
 def map_view_size() -> tuple[int, int]:
@@ -230,90 +226,65 @@ def draw_overlay(alpha: int) -> None:
     screen.blit(_overlay_surface, (0, 0))
 
 
-def apply_maria_action(action) -> None:
-    global maria_previous_action, maria_current_task, maria_location
-    print(f"Maria: {action.action} -> {action.target_location} | {action.journal}")
-
-    if action.journal and action.action != maria_previous_action:
-        log(f"Maria: {action.journal}")
-
-    maria_previous_action = action.action
-    maria_current_task = action.action.replace("_", " ").title()
-    if action.target_location:
-        destination = action.target_location.replace("_", " ").title()
-        maria_current_task = f"{maria_current_task} - {destination}"
-    if action.target_location and action.target_location != maria_location:
-        try:
-            maria.set_path(route(village_map, maria_location, action.target_location))
-            maria_location = action.target_location
-        except (ValueError, KeyError) as exc:
-            print(f"  route failed: {exc}")
-
-
 def update_agents(sim_dt: float) -> None:
-    global maria_cooldown
-    
+    for villager in villagers.villagers:
+        villager.decision_cooldown = max(0.0, villager.decision_cooldown - sim_dt)
+
     # Process results from the backend AI, the output of the batch system
     with world_state.lock:
         if world_state.is_data_ready:
             for v_id, action in world_state.new_actions.items():
-                if v_id == "m1":
-                    apply_maria_action(action)
+                villager = villagers.get_villager(v_id)
+                if villager is None:
+                    continue
+
+                print(f"{villager.name}: {action.action} -> {action.target_location}")
+                if action.journal:
+                    log(f"{villager.name}: {action.journal}")
+
+                villager.previous_action = action.action
+                villager.current_task = action.action.replace("_", " ").title()
+                if action.target_location:
+                    destination = action.target_location.replace("_", " ").title()
+                    villager.current_task = f"{villager.current_task} - {destination}"
+
+                if action.target_location and action.target_location != villager.location_id:
+                    try:
+                        villagers.send_to(villager, action.target_location)
+                        villager.wait_time = 999.0
+                    except (ValueError, KeyError) as exc:
+                        print(f"  route failed for {villager.name}: {exc}")
+                        villager.wait_time = 5.0
+                elif (
+                    villager.agent is not None
+                    and villager.agent.profile.role == "first_responder"
+                    and villager.location_id != "school"
+                ):
+                    choices = [b for b in villagers.buildings if b != villager.location_id]
+                    next_patrol = villagers.rng.choice(choices)
+                    try:
+                        villagers.send_to(villager, next_patrol)
+                        villager.wait_time = 999.0
+                    except (ValueError, KeyError) as exc:
+                        print(f"  route failed for {villager.name}: {exc}")
+                        villager.wait_time = 5.0
                 else:
-                    villager = villagers.get_villager(v_id)
-                    if villager:
-                        print(f"{villager.name}: {action.action} -> {action.target_location}")
-                        if action.journal:
-                            log(f"{villager.name}: {action.journal}")
-                        
-                        villager.previous_action = action.action
-                        
-                        if action.target_location and action.target_location != villager.location_id:
-                            try:
-                                villagers.send_to(villager, action.target_location)
-                                villager.wait_time = 999.0 # Freeze timer while walking
-                            except (ValueError, KeyError) as exc:
-                                print(f"  route failed for {villager.name}: {exc}")
-                                villager.wait_time = 5.0
-                        else:
-                            if villager.agent.profile.role == "first_responder" and villager.location_id != "school":
-                                choices = [b for b in villagers.buildings if b != villager.location_id]
-                                next_patrol = villagers.rng.choice(choices)
-                                try:
-                                    villagers.send_to(villager, next_patrol)
-                                    villager.wait_time = 999.0
-                                except Exception:
-                                    villager.wait_time = 5.0
-                            else:
-                                villager.wait_time = 5.0
+                    villager.wait_time = 5.0
             
             world_state.is_data_ready = False
             world_state.new_actions.clear()
 
-    maria.update(sim_dt)
-    maria_cooldown -= sim_dt
-
     if sim_clock.paused:
         return
 
-    if not maria.path and maria_cooldown <= 0:
-        if not backend_sim.is_queued("m1"):
-            outage = active_disruption == "Power Outage"
-            ctx = VillagerContext(
-                villager_id="m1", name="Maria", location_id=maria_location,
-                day=sim_clock.day_number, phase=sim_clock.day_night.lower(),
-                crisis_active=outage, crisis_day=outage_day() if outage else 0,
-                crisis_duration=OUTAGE_DURATION_DAYS if outage else 0,
-                crisis_area=OUTAGE_AREA if outage else None,
-                power_on=not outage, previous_action=maria_previous_action,
-            )
-            backend_sim.queue_agent("m1", maria_agent, ctx)
-            maria_cooldown = 5.0
-
     for villager in villagers.villagers:
-        if villager.is_scripted:
+        if villager.is_scripted or villager.agent is None:
             continue
-        if not villager.is_walking and villager.wait_time <= 0:
+        if (
+            not villager.is_walking
+            and villager.wait_time <= 0
+            and villager.decision_cooldown <= 0
+        ):
             if not backend_sim.is_queued(villager.agent_id):
                 outage = active_disruption == "Power Outage"
                 ctx = VillagerContext(
@@ -332,34 +303,46 @@ def update_agents(sim_dt: float) -> None:
                 # Send them to the backend queue
                 backend_sim.queue_agent(villager.agent_id, villager.agent, ctx)
                 villager.wait_time = 999.0
-
-def maria_screen_position() -> tuple[int, int]:
-    return renderer.world_to_screen((int(maria.x), int(maria.y)))
+                villager.decision_cooldown = VILLAGER_DECISION_COOLDOWN
 
 
-def maria_hit_test(position: tuple[int, int]) -> bool:
+def villager_presentations() -> list[VillagerPresentation]:
+    presentations = []
+    for villager in villagers.villagers:
+        role = "NPC" if villager.agent is None else villager.agent.profile.role
+        position = renderer.world_to_screen(
+            (
+                int(villager.position[0] + villager.offset[0]),
+                int(villager.position[1] + villager.offset[1]),
+            )
+        )
+        presentations.append(
+            VillagerPresentation(villager, role, position, max(5, round(9 * renderer.zoom)))
+        )
+    return presentations
+
+
+def villager_at(
+    position: tuple[int, int],
+    presentations: list[VillagerPresentation] | None = None,
+) -> VillagerPresentation | None:
     if bottom_menu.rect.collidepoint(position) or right_menu.rect.collidepoint(position):
-        return False
-    sprite_x, sprite_y = maria_screen_position()
-    return hypot(position[0] - sprite_x, position[1] - sprite_y) <= maria.radius + 5
+        return None
+
+    if presentations is None:
+        presentations = villager_presentations()
+    for villager in reversed(presentations):
+        sprite_x, sprite_y = villager.screen_position
+        if hypot(position[0] - sprite_x, position[1] - sprite_y) <= villager.radius + 5:
+            return villager
+    return None
 
 
-def draw_maria() -> None:
-    # Maria gets a yellow name tag so she stands out as the AI villager
-    position = maria_screen_position()
-    pygame.draw.circle(screen, maria.color, position, maria.radius)
-    pygame.draw.circle(screen, (255, 255, 255), position, maria.radius, width=2)
-    label = info_font.render("Maria (YOU)", True, (20, 20, 20))
-    label_rect = label.get_rect(midbottom=(position[0], position[1] - maria.radius - 5))
-    pygame.draw.rect(screen, (255, 230, 140), label_rect.inflate(6, 3), border_radius=3)
-    screen.blit(label, label_rect)
-
-
-def draw_maria_info() -> None:
+def draw_villager_info(villager: VillagerPresentation) -> None:
     lines = (
-        "Maria",
-        f"Role: {maria_agent.role.replace('_', ' ').title()}",
-        f"Task: {maria_current_task}",
+        villager.villager.name,
+        f"Role: {villager.role.replace('_', ' ').title()}",
+        f"Task: {villager.villager.current_task}",
     )
     padding = 8
     line_height = info_font.get_linesize()
@@ -370,13 +353,13 @@ def draw_maria_info() -> None:
     width = min(width, max(1, viewport_width - 8))
     height = min(height, max(1, viewport_height - 8))
 
-    sprite_x, sprite_y = maria_screen_position()
+    sprite_x, sprite_y = villager.screen_position
     left = min(
         max(sprite_x - width // 2, 4),
         viewport_width - width - 4,
     )
     top = min(
-        max(sprite_y - maria.radius - height - 8, 4),
+        max(sprite_y - villager.radius - height - 8, 4),
         viewport_height - height - 4,
     )
     popup = pygame.Rect(left, top, width, height)
@@ -405,13 +388,15 @@ while True:
             resize_menus()
             clamp_camera()
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == pygame.BUTTON_LEFT:
-            on_maria = maria_hit_test(event.pos)
-            maria_selected = on_maria
+            clicked_villager = villager_at(event.pos)
+            selected_villager_id = (
+                clicked_villager.villager_id if clicked_villager is not None else None
+            )
             over_menu = (
                 bottom_menu.rect.collidepoint(event.pos)
                 or right_menu.rect.collidepoint(event.pos)
             )
-            if not on_maria and not over_menu:
+            if clicked_villager is None and not over_menu:
                 is_panning = True
                 last_mouse_position = event.pos
         if event.type == pygame.MOUSEBUTTONUP and event.button == pygame.BUTTON_LEFT:
@@ -443,7 +428,9 @@ while True:
     # advance the day/night clock (it handles pause and speed itself)
     for phase, _day in sim_clock.update(dt):
         villagers.set_night(phase == "Night")
-        maria_cooldown = 0.0  # let Maria react to the new period
+        for villager in villagers.villagers:
+            if villager.agent is not None:
+                villager.decision_cooldown = 0.0
         log_period()
         log("Night falls, villagers head home" if phase == "Night" else "Morning, villagers start their day")
 
@@ -470,9 +457,19 @@ while True:
     if active_disruption == "Power Outage":
         draw_overlay(140)
     villagers.draw(screen, renderer)
-    draw_maria()
-    if maria_selected or maria_hit_test(pygame.mouse.get_pos()):
-        draw_maria_info()
+    villager_views = villager_presentations()
+    hovered_villager = villager_at(pygame.mouse.get_pos(), villager_views)
+    selected_villager = next(
+        (
+            villager
+            for villager in villager_views
+            if villager.villager_id == selected_villager_id
+        ),
+        None,
+    )
+    info_villager = selected_villager or hovered_villager
+    if info_villager is not None:
+        draw_villager_info(info_villager)
     right_menu.draw(screen)
     bottom_menu.draw(screen)
 

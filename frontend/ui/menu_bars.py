@@ -135,14 +135,21 @@ class BottomMenuBar(FloatingMenuBar):
         if self.on_disruption is not None:
             self.on_disruption(name, is_active)
 
-    def resize(self, surface_size: tuple[int, int]) -> None:
+    def resize(
+        self,
+        surface_size: tuple[int, int],
+        right_edge: int | None = None,
+    ) -> None:
         width, height = surface_size
         bar_height = max(1, round(height * self.height_ratio))
         margin = max(8, round(height * 0.015))
+        bar_width = width - margin * 2
+        if right_edge is not None:
+            bar_width = min(bar_width, right_edge - margin * 2)
         self.rect = pygame.Rect(
             margin,
             height - bar_height - margin,
-            width - (margin * 2),
+            max(1, bar_width),
             bar_height,
         )
         self._layout_buttons()
@@ -216,18 +223,33 @@ class RightMenuBar(FloatingMenuBar):
 
         self._title_surface = None
         self._entry_cache: dict [ str, pygame.Surface] ={}
+        self.scroll_offset = 0
+        self._max_scroll_offset = 0
+        self._scrollbar_drag_offset: int | None = None
+        self._scrollbar_track = pygame.Rect(0, 0, 0, 0)
+        self._scrollbar_thumb = pygame.Rect(0, 0, 0, 0)
 
     def add_entry(self, text: str) -> None:
         """add a line to the bottom of the villager journal"""
+        appended_height = self._entry_height(text)
         self.entries.append(text)
+        removed_height = 0
         # Remove the oldest entry if we exceed the max
         if len(self.entries) > self.max_entries:
-            self.entries.pop(0)
+            removed_height = self._entry_height(self.entries.pop(0))
+        height_change = appended_height - removed_height
+        self._max_scroll_offset = max(0, self._max_scroll_offset + height_change)
+        if self.scroll_offset > 0:
+            self.scroll_offset += appended_height
+            self.scroll_offset = min(self.scroll_offset, self._max_scroll_offset)
 
     def clear(self) -> None:
-        # remove every journal entry (used by reset)
+        # remove every journal entry and reset scrolling (used by simulation reset)
         self.entries.clear()
         self._entry_cache.clear()
+        self.scroll_offset = 0
+        self._max_scroll_offset = 0
+        self._scrollbar_drag_offset = None
 
     def resize(self, surface_size: tuple[int, int]) -> None:
         width, height = surface_size
@@ -255,6 +277,62 @@ class RightMenuBar(FloatingMenuBar):
             lines.append(current)
         return lines
 
+    def _content_height(self) -> int:
+        """Return the total height of all wrapped journal entries."""
+        return sum(
+            self._entry_height(entry)
+            for entry in self.entries
+        )
+
+    def _entry_height(self, entry: str) -> int:
+        """Measure an entry, including its wrapped lines and trailing gap."""
+        text_width = max(1, self.rect.width - self.padding * 2 - 12)
+        wrapped = self._wrap_text(entry, text_width)
+        return self.entry_font.get_linesize() * len(wrapped) + self.entry_gap
+
+    def handle_event(self, event: pygame.event.Event) -> None:
+        """Scroll the journal with the wheel or by dragging its scrollbar."""
+        if event.type == pygame.MOUSEWHEEL:
+            if self.rect.collidepoint(pygame.mouse.get_pos()):
+                # Positive offsets reveal older entries above the newest ones.
+                self.scroll_offset = min(
+                    self._max_scroll_offset,
+                    max(
+                        0,
+                        self.scroll_offset
+                        - event.y * self.entry_font.get_linesize() * 3,
+                    ),
+                )
+                return
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == pygame.BUTTON_LEFT:
+            if self._scrollbar_thumb.collidepoint(event.pos):
+                self._scrollbar_drag_offset = event.pos[1] - self._scrollbar_thumb.top
+                return
+            if self._scrollbar_track.collidepoint(event.pos):
+                self._scrollbar_drag_offset = self._scrollbar_thumb.height // 2
+                self._move_scrollbar_thumb(event.pos[1])
+
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == pygame.BUTTON_LEFT:
+            self._scrollbar_drag_offset = None
+
+        elif event.type == pygame.MOUSEMOTION and self._scrollbar_drag_offset is not None:
+            self._move_scrollbar_thumb(event.pos[1])
+
+    def _move_scrollbar_thumb(self, mouse_y: int) -> None:
+        """Map the thumb's vertical position to the journal's scroll offset."""
+        track_range = self._scrollbar_track.height - self._scrollbar_thumb.height
+        if track_range <= 0:
+            self.scroll_offset = 0
+            return
+
+        thumb_top = min(
+            max(mouse_y - (self._scrollbar_drag_offset or 0), self._scrollbar_track.top),
+            self._scrollbar_track.bottom - self._scrollbar_thumb.height,
+        )
+        fraction = (thumb_top - self._scrollbar_track.top) / track_range
+        self.scroll_offset = round((1 - fraction) * self._max_scroll_offset)
+
     def draw(self, surface: pygame.Surface) -> None:
         super().draw(surface)
         
@@ -266,45 +344,70 @@ class RightMenuBar(FloatingMenuBar):
         )
         surface.blit(self._title_surface, label_rect)
 
-        previous_clip = surface.get_clip()
-        surface.set_clip(self.rect.inflate(-4, -4))
-
-        text_width = self.rect.width - self.padding * 2
+        text_width = self.rect.width - self.padding * 2 - 12
         line_height = self.entry_font.get_linesize()
         start_y = label_rect.bottom + self.padding
         max_y = self.rect.bottom - self.padding
+        viewport = pygame.Rect(
+            self.rect.left + self.padding,
+            start_y,
+            max(1, text_width),
+            max(1, max_y - start_y),
+        )
         
         # 1. Flatten entries into wrapped lines (keeping track of where gaps go)
-        all_lines = []
+        all_lines: list[tuple[str, bool]] = []
         for entry in self.entries:
             wrapped = self._wrap_text(entry, text_width)
             for i, line in enumerate(wrapped):
-                # is this the last line of the entry? (so we add a gap after)
-                is_last_line = (i == len(wrapped) - 1)
-                all_lines.append((line, is_last_line))
-        
-        # 2. Work backwards from the bottom to see which lines fit on screen
-        lines_to_draw = []
-        current_y = max_y
-        
-        for line, is_last in reversed(all_lines):
-            needed_height = line_height + (self.entry_gap if is_last else 0)
-            if current_y - needed_height < start_y:
-                break # We ran out of vertical space
-            lines_to_draw.append((line, is_last))
-            current_y -= needed_height
-            
-        # 3. Reverse back to chronological order (oldest -> newest) and draw
-        lines_to_draw.reverse()
-        
-        y = start_y
-        for line, is_last in lines_to_draw:
+                all_lines.append((line, i == len(wrapped) - 1))
+
+        # 2. Compute the scroll range from the visible area and all journal content.
+        content_height = self._content_height()
+        self._max_scroll_offset = max(0, content_height - viewport.height)
+        self.scroll_offset = min(self.scroll_offset, self._max_scroll_offset)
+
+        # 3. Size the thumb to see which lines fit on screen
+        self._scrollbar_track = pygame.Rect(
+            self.rect.right - self.padding - 6,
+            viewport.top,
+            6,
+            viewport.height,
+        )
+        if self._max_scroll_offset:
+            thumb_height = max(
+                min(18, self._scrollbar_track.height),
+                round(self._scrollbar_track.height * viewport.height / content_height),
+            )
+            thumb_travel = self._scrollbar_track.height - thumb_height
+            thumb_top = self._scrollbar_track.top + round(
+                thumb_travel
+                * (1 - self.scroll_offset / self._max_scroll_offset)
+            )
+            self._scrollbar_thumb = pygame.Rect(
+                self._scrollbar_track.left,
+                thumb_top,
+                self._scrollbar_track.width,
+                thumb_height,
+            )
+        else:
+            self._scrollbar_thumb = self._scrollbar_track.copy()
+
+        previous_clip = surface.get_clip()
+        surface.set_clip(viewport)
+        # 4. Offset from the bottom so new entries remain visible at scroll position zero.
+        y = viewport.bottom - content_height + self.scroll_offset
+        for line, is_last in all_lines:
             if line not in self._entry_cache:
                 self._entry_cache[line] = self.entry_font.render(line, True, self.text_color)
             
-            surface.blit(self._entry_cache[line], (self.rect.left + self.padding, y))
+            surface.blit(self._entry_cache[line], (viewport.left, y))
             y += line_height
             if is_last:
                 y += self.entry_gap
 
         surface.set_clip(previous_clip)
+
+        pygame.draw.rect(surface, self.border, self._scrollbar_track, border_radius=3)
+        if self._max_scroll_offset:
+            pygame.draw.rect(surface, self.text_color, self._scrollbar_thumb, border_radius=3)

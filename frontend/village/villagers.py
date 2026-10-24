@@ -6,6 +6,7 @@ import math
 import random
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 
 import pygame
 
@@ -23,6 +24,7 @@ CROSSWALK_GAP = 100    # sidewalks this close are connected by a road crossing
 
 # name, home building, color (building ids match backend/map/graph.py)
 STARTING_VILLAGERS = [
+    ("m1", "Maria", "home_a", (200, 40, 40), CITIZEN),
     ("v_ana", "Dr. Ana", "home_a", (220, 60, 60), DOCTOR),        # Doctor
     ("v_ben", "Ben", "home_b", (40, 120, 220), FIREFIGHTER),      # First Responder
     ("v_carla", "Carla", "home_b", (240, 140, 20), ELECTRICIAN),  # Electrician
@@ -122,7 +124,9 @@ class Villager:
     wait_time: float = 0.0   # seconds before leaving the current building
     offset: Vec = (0.0, 0.0)   # small shift so villagers don't overlap
     previous_action: str | None = None
+    current_task: str = "Waiting"
     is_scripted: bool = False
+    decision_cooldown: float = 0.0
 
     @property
     def is_walking(self) -> bool:
@@ -134,16 +138,17 @@ class VillagerManager:
 
     walk_speed = 140.0  # world units per second
 
-    def __init__(self, village_map: VillageMap, rng: random.Random | None = None) -> None:
+    def __init__(self, village_map: VillageMap, rng: random.Random | None = None, llm_client: Any = None) -> None:
         self.network = SidewalkNetwork(village_map)
         self.buildings = {b.id: b for b in village_map.buildings}
         self.rng = rng or random.Random()
+        self.llm_client = llm_client
         self.power_outage = False
         self.is_night = False
         self.font = pygame.font.Font(None, 16)
         self._label_cache: dict[str, pygame.Surface] = {}
         self.villagers = [
-            self._spawn(v_id, name, home_id, color, profile) 
+            self._spawn(v_id, name, home_id, color, profile)
             for v_id, name, home_id, color, profile in STARTING_VILLAGERS
         ]
         for v_id, name, home_id, color in SCRIPTED_NPCS:
@@ -154,8 +159,8 @@ class VillagerManager:
 
     def _spawn(self, agent_id: str, name: str, home_id: str, color: Color, profile) -> Villager:
         home = self.buildings[home_id]
-        agent = VillagerAgent(agent_id, name, profile)
-        
+        agent = VillagerAgent(agent_id, name, profile, llm_client=self.llm_client) if profile is not None else None
+
         return Villager(
             agent_id=agent_id,
             name=name,
