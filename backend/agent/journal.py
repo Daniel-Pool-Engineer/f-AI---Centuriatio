@@ -46,6 +46,6 @@ class VillagerJournal:
         return period_grouped
 
     def save_journal_event(self) -> None:
-        data=[asdict(entry) for entry in self.activites]
+        data=[asdict(entry) for entry in self.activities]
         with open(self.path, 'w') as f:
             json.dump(data,f)
