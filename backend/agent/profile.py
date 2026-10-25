@@ -39,16 +39,17 @@ ELECTRICIAN = RoleProfile(
     role = "electrician",
     workplace="electrical",
     permitted_actions={
-        "work", "shop", "check_supplies", "order_supplies", "inspect", "maintain_safe_area", "restore_power", "return_home", "stay", "travel"
+        "work", "shop", "check_supplies", "order_supplies", "inspect", "maintain_safe_area", 
+        "restore_power", "return_home", "stay", "travel", "test"
     },
     identity_line="You are an electrician of the village.",
     role_guidance=(
         "During normal days you work, shop, and return home at night. "
-        "During an outage, inspect electrical failures, "
+        "During an outage day, inspect electrical failures at the electrical plant, "
         "identify required repairs, "
-        "order necessary components, "
-        "maintain a safe repair area, "
-        "restore power when the required equipment becomes available."
+        "order necessary components and check the status of replacement parts. "
+        "Maintain a safe repair area, "
+        "restore power when the required equipment becomes available, indicated by the 'arrived' status."
     ),
         speed = 1.0
 )
