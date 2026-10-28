@@ -15,8 +15,8 @@ Color = tuple[int, int, int]
 class VillageMapRenderer:
     """draws the village map"""
 
-    background_color: Color = (225, 228, 218)
-    grid_color: Color = (214, 217, 207)
+    background_color: Color = (66, 105, 65)
+    grid_color: Color = (72, 112, 70)
 
     main_road_color: Color = (68, 72, 80)
     local_road_color: Color = (91, 95, 102)
@@ -134,6 +134,7 @@ class VillageMapRenderer:
         for road in village_map.roads:
             color = self.main_road_color if road.road_type == "main" else self.local_road_color
             pygame.draw.rect(surface, color, self._rect_to_screen(road.bounds))
+            self._draw_road_lines(surface, road.bounds)
 
         for sidewalk in village_map.sidewalks:
             pygame.draw.rect(surface, self.sidewalk_color, self._rect_to_screen(sidewalk.bounds))
@@ -143,6 +144,60 @@ class VillageMapRenderer:
 
         spawn = self.world_to_screen(village_map.villager_spawn)
         pygame.draw.circle(surface, self.spawn_color, spawn, max(6, round(12 * self.zoom)))
+
+    def _draw_road_lines(
+        self,
+        surface: pygame.Surface,
+        bounds: tuple[int, int, int, int],
+    ) -> None:
+        x, y, width, height = bounds
+
+        dash_length = 48
+        gap_length = 32
+        line_width = max(1, round(4 * self.zoom))
+        line_color = (240, 240, 230)
+
+        # Horizontal road
+        if width >= height:
+            center_y = y + height // 2
+            start = x
+
+            while start < x + width:
+                end = min(start + dash_length, x + width)
+
+                start_pos = self.world_to_screen((start, center_y))
+                end_pos = self.world_to_screen((end, center_y))
+
+                pygame.draw.line(
+                    surface,
+                    line_color,
+                    start_pos,
+                    end_pos,
+                    line_width,
+                )
+
+                start += dash_length + gap_length
+
+        # Vertical road
+        else:
+            center_x = x + width // 2
+            start = y
+
+            while start < y + height:
+                end = min(start + dash_length, y + height)
+
+                start_pos = self.world_to_screen((center_x, start))
+                end_pos = self.world_to_screen((center_x, end))
+
+                pygame.draw.line(
+                    surface,
+                    line_color,
+                    start_pos,
+                    end_pos,
+                    line_width,
+                )
+
+                start += dash_length + gap_length
 
     def _draw_building(
         self,
