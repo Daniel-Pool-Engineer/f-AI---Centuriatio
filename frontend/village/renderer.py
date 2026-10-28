@@ -155,7 +155,7 @@ class VillageMapRenderer:
         dash_length = 48
         gap_length = 32
         line_width = max(1, round(4 * self.zoom))
-        line_color = (240, 240, 230)
+        line_color = (255, 215, 0)
 
         # Horizontal road
         if width >= height:
