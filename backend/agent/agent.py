@@ -207,6 +207,14 @@ class VillagerAgent:
             else "Crisis: none."
         )
 
+        string_addition = ""
+
+        if self.role == "electrician" and ctx.parts_arrived is not None:
+            if ctx.parts_arrived:
+                string_addition = "Replacement part arrived, go to the electrical plant and restore power.\n"
+            else:
+                string_addition = "Waiting for a replacement part.\n"
+
         user = (
             f"Villager: {self.name} (id={self.villager_id})\n"
             f"Role: {self.profile.role}\n"
@@ -215,6 +223,7 @@ class VillagerAgent:
             f"Time: Day {ctx.day}, {ctx.phase}\n"
             f"{crisis_line}\n"
             f"Power: {'on' if ctx.power_on else 'off'}\n"
+            f"{string_addition}"
             f"Previous action: {ctx.previous_action or 'none'}\n"
             f"Permitted actions: {sorted(self.profile.permitted_actions)}\n"
             f"Valid locations: {sorted(VillageMap.locations)}\n"
