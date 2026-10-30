@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 from math import hypot
+from pathlib import Path
 
 import pygame
 
@@ -51,6 +52,8 @@ backend_started = False
 village_map = create_test_map()
 
 screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
+icon_path = Path(__file__).resolve().parent.parent / "assets" / "Icon.png"
+pygame.display.set_icon(pygame.image.load(icon_path).convert_alpha())
 pygame.display.set_caption("Centuriatio")
 
 renderer = VillageMapRenderer()
