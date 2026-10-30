@@ -22,6 +22,11 @@ class VillageMapRenderer:
     local_road_color: Color = (91, 95, 102)
 
     sidewalk_color: Color = (191, 187, 173)
+    crosswalk_color: Color = (238, 238, 225)
+    crosswalk_stripe_size = 8
+    crosswalk_stripe_gap = 8
+    crosswalk_margin = 4
+    road_sidewalk_gap_limit = 8
 
     entrance_color: Color = (250, 190, 54)
     spawn_color: Color = (42, 116, 70)
@@ -131,13 +136,23 @@ class VillageMapRenderer:
         if show_grid:
             self._draw_grid(surface, village_map)
 
+        for sidewalk in village_map.sidewalks:
+            if not sidewalk.id.startswith("crosswalk-"):
+                pygame.draw.rect(surface, self.sidewalk_color, self._rect_to_screen(sidewalk.bounds))
+
+        self._draw_road_sidewalk_gaps(surface, village_map)
+
+        # Roads are redrawn over sidewalk edges so their bounds stay visually exact.
         for road in village_map.roads:
             color = self.main_road_color if road.road_type == "main" else self.local_road_color
             pygame.draw.rect(surface, color, self._rect_to_screen(road.bounds))
-            self._draw_road_lines(surface, road.bounds)
+            self._draw_road_lines(surface, road.bounds, village_map)
 
         for sidewalk in village_map.sidewalks:
-            pygame.draw.rect(surface, self.sidewalk_color, self._rect_to_screen(sidewalk.bounds))
+            if sidewalk.id.startswith("crosswalk-"):
+                road_color = self._crosswalk_road_color(sidewalk.bounds, village_map)
+                pygame.draw.rect(surface, road_color, self._rect_to_screen(sidewalk.bounds))
+                self._draw_crosswalk_stripes(surface, sidewalk.bounds)
 
         for building in village_map.buildings:
             self._draw_building(surface, building, show_labels=show_labels)
@@ -145,10 +160,95 @@ class VillageMapRenderer:
         spawn = self.world_to_screen(village_map.villager_spawn)
         pygame.draw.circle(surface, self.spawn_color, spawn, max(6, round(12 * self.zoom)))
 
+    def _draw_road_sidewalk_gaps(self, surface: pygame.Surface, village_map: VillageMap) -> None:
+        # fill in the gaps where a sidewalk runs alongside a road
+        for road in village_map.roads:
+            road_x, road_y, road_width, road_height = road.bounds
+            road_color = self.main_road_color if road.road_type == "main" else self.local_road_color
+            for sidewalk in village_map.sidewalks:
+                sidewalk_x, sidewalk_y, sidewalk_width, sidewalk_height = sidewalk.bounds
+
+                overlap_left = max(road_x, sidewalk_x)
+                overlap_right = min(road_x + road_width, sidewalk_x + sidewalk_width)
+                if overlap_left < overlap_right:
+                    if road_y + road_height <= sidewalk_y:
+                        gap = sidewalk_y - (road_y + road_height)
+                        gap_bounds = (overlap_left, road_y + road_height, overlap_right - overlap_left, gap)
+                    elif sidewalk_y + sidewalk_height <= road_y:
+                        gap = road_y - (sidewalk_y + sidewalk_height)
+                        gap_bounds = (overlap_left, sidewalk_y + sidewalk_height, overlap_right - overlap_left, gap)
+                    else:
+                        gap = 0
+                        gap_bounds = (0, 0, 0, 0)
+
+                    if 0 < gap <= self.road_sidewalk_gap_limit:
+                        pygame.draw.rect(surface, road_color, self._rect_to_screen(gap_bounds))
+
+                overlap_top = max(road_y, sidewalk_y)
+                overlap_bottom = min(road_y + road_height, sidewalk_y + sidewalk_height)
+                if overlap_top < overlap_bottom:
+                    if road_x + road_width <= sidewalk_x:
+                        gap = sidewalk_x - (road_x + road_width)
+                        gap_bounds = (road_x + road_width, overlap_top, gap, overlap_bottom - overlap_top)
+                    elif sidewalk_x + sidewalk_width <= road_x:
+                        gap = road_x - (sidewalk_x + sidewalk_width)
+                        gap_bounds = (sidewalk_x + sidewalk_width, overlap_top, gap, overlap_bottom - overlap_top)
+                    else:
+                        gap = 0
+                        gap_bounds = (0, 0, 0, 0)
+
+                    if 0 < gap <= self.road_sidewalk_gap_limit:
+                        pygame.draw.rect(surface, road_color, self._rect_to_screen(gap_bounds))
+
+    def _crosswalk_road_color(self, bounds: tuple[int, int, int, int], village_map: VillageMap) -> Color:
+        # return the road surface color beneath a crosswalk
+        x, y, width, height = bounds
+        for road in village_map.roads:
+            road_x, road_y, road_width, road_height = road.bounds
+            if (
+                x < road_x + road_width
+                and x + width > road_x
+                and y < road_y + road_height
+                and y + height > road_y
+            ):
+                return self.main_road_color if road.road_type == "main" else self.local_road_color
+        return self.main_road_color
+
+    def _draw_crosswalk_stripes(self, surface: pygame.Surface, bounds: tuple[int, int, int, int]) -> None:
+        # evenly spaced zebra stripes across a crosswalk segment
+        x, y, width, height = bounds
+        step = self.crosswalk_stripe_size + self.crosswalk_stripe_gap
+
+        if width >= height:
+            start = x + self.crosswalk_margin
+            end = x + width - self.crosswalk_margin
+            while start + self.crosswalk_stripe_size <= end:
+                stripe = (
+                    start,
+                    y + self.crosswalk_margin,
+                    self.crosswalk_stripe_size,
+                    max(1, height - self.crosswalk_margin * 2),
+                )
+                pygame.draw.rect(surface, self.crosswalk_color, self._rect_to_screen(stripe))
+                start += step
+        else:
+            start = y + self.crosswalk_margin
+            end = y + height - self.crosswalk_margin
+            while start + self.crosswalk_stripe_size <= end:
+                stripe = (
+                    x + self.crosswalk_margin,
+                    start,
+                    max(1, width - self.crosswalk_margin * 2),
+                    self.crosswalk_stripe_size,
+                )
+                pygame.draw.rect(surface, self.crosswalk_color, self._rect_to_screen(stripe))
+                start += step
+
     def _draw_road_lines(
         self,
         surface: pygame.Surface,
         bounds: tuple[int, int, int, int],
+        village_map: VillageMap,
     ) -> None:
         x, y, width, height = bounds
 
@@ -156,48 +256,74 @@ class VillageMapRenderer:
         gap_length = 32
         line_width = max(1, round(4 * self.zoom))
         line_color = (255, 215, 0)
+        horizontal = width >= height
+        center = y + height // 2 if horizontal else x + width // 2
+        axis_start = x if horizontal else y
+        axis_end = x + width if horizontal else y + height
+        road_rect = pygame.Rect(bounds)
+        blocked: list[tuple[int, int]] = []
 
-        # Horizontal road
-        if width >= height:
-            center_y = y + height // 2
-            start = x
+        for other in village_map.roads:
+            if other.bounds == bounds:
+                continue
+            intersection = road_rect.clip(pygame.Rect(other.bounds))
+            if intersection.width > 0 and intersection.height > 0:
+                blocked.append((
+                    intersection.left if horizontal else intersection.top,
+                    intersection.right if horizontal else intersection.bottom,
+                ))
 
-            while start < x + width:
-                end = min(start + dash_length, x + width)
+        for sidewalk in village_map.sidewalks:
+            if not sidewalk.id.startswith("crosswalk-"):
+                continue
+            crosswalk = pygame.Rect(sidewalk.bounds)
+            covers_centerline = (
+                crosswalk.top <= center < crosswalk.bottom
+                if horizontal
+                else crosswalk.left <= center < crosswalk.right
+            )
+            if covers_centerline:
+                blocked.append((
+                    crosswalk.left if horizontal else crosswalk.top,
+                    crosswalk.right if horizontal else crosswalk.bottom,
+                ))
 
-                start_pos = self.world_to_screen((start, center_y))
-                end_pos = self.world_to_screen((end, center_y))
+        blocked.sort()
+        merged_blocked: list[tuple[int, int]] = []
+        for block_start, block_end in blocked:
+            if merged_blocked and block_start <= merged_blocked[-1][1] + self.road_sidewalk_gap_limit:
+                merged_blocked[-1] = (merged_blocked[-1][0], max(merged_blocked[-1][1], block_end))
+            else:
+                merged_blocked.append((block_start, block_end))
 
-                pygame.draw.line(
-                    surface,
-                    line_color,
-                    start_pos,
-                    end_pos,
-                    line_width,
-                )
+        def draw_segment(segment_start: int, segment_end: int) -> None:
+            if segment_start >= segment_end:
+                return
+            start_point = (segment_start, center) if horizontal else (center, segment_start)
+            end_point = (segment_end, center) if horizontal else (center, segment_end)
+            pygame.draw.line(
+                surface,
+                line_color,
+                self.world_to_screen(start_point),
+                self.world_to_screen(end_point),
+                line_width,
+            )
 
-                start += dash_length + gap_length
-
-        # Vertical road
-        else:
-            center_x = x + width // 2
-            start = y
-
-            while start < y + height:
-                end = min(start + dash_length, y + height)
-
-                start_pos = self.world_to_screen((center_x, start))
-                end_pos = self.world_to_screen((center_x, end))
-
-                pygame.draw.line(
-                    surface,
-                    line_color,
-                    start_pos,
-                    end_pos,
-                    line_width,
-                )
-
-                start += dash_length + gap_length
+        dash_start = axis_start
+        while dash_start < axis_end:
+            dash_end = min(dash_start + dash_length, axis_end)
+            visible_start = dash_start
+            for block_start, block_end in merged_blocked:
+                if block_end <= visible_start:
+                    continue
+                if block_start >= dash_end:
+                    break
+                draw_segment(visible_start, min(block_start, dash_end))
+                visible_start = max(visible_start, block_end)
+                if visible_start >= dash_end:
+                    break
+            draw_segment(visible_start, dash_end)
+            dash_start += dash_length + gap_length
 
     def _draw_building(
         self,
